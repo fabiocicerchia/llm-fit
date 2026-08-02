@@ -1,0 +1,12 @@
+# gandalf gate config.
+#
+# docs/requirements.txt (mkdocs-material, for Read the Docs) makes gandalf
+# detect "python" and enable the Python-only gates. There is no Python source
+# in this repo, so those two gates fail on an absence that is not a defect:
+#
+#   tests   — runs pytest, which exits 5 "no tests collected". The Go suite is
+#             covered by the go_test gate.
+#   atheris — looks for tests/fuzz/fuzz_adapters.py. Fuzzing lives in Go's
+#             native harnesses instead (FuzzFetchID, FuzzLookup).
+[gandalf]
+skip = ["tests", "atheris"]

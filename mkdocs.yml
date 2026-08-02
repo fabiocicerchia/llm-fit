@@ -1,5 +1,8 @@
 site_name: llm-fit
-site_description: Which LLMs this machine can run, and how fast — memory and bandwidth arithmetic across llama.cpp, Ollama, vLLM, SGLang, ExLlamaV2, MLX and TensorRT-LLM.
+site_description: >-
+  Which LLMs this machine can run, and how fast — memory and bandwidth
+  arithmetic across llama.cpp, Ollama, vLLM, SGLang, ExLlamaV2, MLX and
+  TensorRT-LLM.
 repo_url: https://github.com/fabiocicerchia/llm-fit
 docs_dir: docs
 

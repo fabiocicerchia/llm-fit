@@ -10,6 +10,7 @@
 package engine
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/fit"
@@ -171,31 +172,10 @@ func vendorList(vs []hw.Vendor) string {
 	return strings.Join(parts, " or ")
 }
 
+// trim prints a compute capability without trailing zeros: 8.6 stays "8.6",
+// 9.0 becomes "9". The shortest representation that round-trips is what a
+// version-like number wants — truncating to one decimal by hand turned 8.6
+// into "8.5", because 8.6-8 is 0.5999999999999996 in binary floating point.
 func trim(f float64) string {
-	s := strings.TrimRight(strings.TrimRight(formatFloat(f), "0"), ".")
-	if s == "" {
-		return "0"
-	}
-	return s
-}
-
-func formatFloat(f float64) string {
-	// One decimal is enough for a compute capability.
-	whole := int(f)
-	frac := int((f - float64(whole)) * 10)
-	return itoa(whole) + "." + itoa(frac)
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }

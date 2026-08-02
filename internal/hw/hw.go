@@ -189,7 +189,7 @@ func detectNvidia() ([]GPU, string) {
 				g.ComputeCapability = spec.ComputeCapability
 			}
 		} else {
-			g.Estimated = true
+			EstimateUnknown(&g)
 		}
 		gpus = append(gpus, g)
 	}
@@ -217,7 +217,10 @@ func detectAMD() []GPU {
 			g.TotalBytes = int64(spec.VRAMGiB * (1 << 30))
 			g.FreeBytes = g.TotalBytes
 		} else {
-			g.Estimated = true
+			// Capacity is still unknown here — rocm-smi's meminfo columns are
+			// not parsed — so this card contributes bandwidth but no memory,
+			// and nothing will be recommended onto it.
+			EstimateUnknown(&g)
 		}
 		gpus = append(gpus, g)
 	}

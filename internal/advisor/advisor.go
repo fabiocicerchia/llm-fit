@@ -16,6 +16,7 @@ package advisor
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/arch"
 	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/catalog"
@@ -298,28 +299,9 @@ func Inspect(model arch.Model, m hw.Machine, req Request) []Option {
 
 func named(list []string, name string) bool {
 	for _, s := range list {
-		if equalFold(s, name) {
+		if strings.EqualFold(s, name) {
 			return true
 		}
 	}
 	return false
-}
-
-func equalFold(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		x, y := a[i], b[i]
-		if 'A' <= x && x <= 'Z' {
-			x += 32
-		}
-		if 'A' <= y && y <= 'Z' {
-			y += 32
-		}
-		if x != y {
-			return false
-		}
-	}
-	return true
 }

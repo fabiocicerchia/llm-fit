@@ -1,1 +1,7 @@
 bin/
+
+# gandalf run output
+reports/
+.gandalf-trend.jsonl
+.gandalf-cache.json
+

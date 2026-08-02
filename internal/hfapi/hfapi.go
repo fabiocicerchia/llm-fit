@@ -49,8 +49,38 @@ type safetensorsIndex struct {
 	} `json:"metadata"`
 }
 
+// ValidateID checks a Hugging Face repo id before it is pasted into a URL.
+//
+// The id arrives from the command line and is interpolated into the request
+// path, so "../.." or a "%2e%2e" escape would aim the request somewhere other
+// than a model repo. Hugging Face ids are "owner/name" over a small charset, so
+// the check is an allowlist rather than an attempt to spot bad input.
+func ValidateID(id string) error {
+	owner, name, ok := strings.Cut(id, "/")
+	if !ok || strings.Contains(name, "/") {
+		return fmt.Errorf("%q is not a Hugging Face repo id (expected owner/name, e.g. Qwen/Qwen3-8B)", id)
+	}
+	for _, part := range []string{owner, name} {
+		if part == "" || part == "." || part == ".." {
+			return fmt.Errorf("%q is not a Hugging Face repo id (empty or relative path segment)", id)
+		}
+		for _, r := range part {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			case r == '-', r == '_', r == '.':
+			default:
+				return fmt.Errorf("%q is not a Hugging Face repo id (illegal character %q)", id, r)
+			}
+		}
+	}
+	return nil
+}
+
 // Fetch builds a Model from a Hugging Face repo id such as "Qwen/Qwen3-8B".
 func Fetch(id string) (arch.Model, error) {
+	if err := ValidateID(id); err != nil {
+		return arch.Model{}, err
+	}
 	client := &http.Client{Timeout: 20 * time.Second}
 
 	var cfg config
@@ -189,11 +219,4 @@ func token() string {
 		}
 	}
 	return ""
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

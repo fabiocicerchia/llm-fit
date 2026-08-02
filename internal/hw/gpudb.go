@@ -128,6 +128,36 @@ func Lookup(name string) (Spec, bool) {
 	return specs[best], true
 }
 
+// Fallbacks for a discrete card the table has never heard of — which is the
+// normal state of affairs for the first months of any new generation.
+//
+// Leaving bandwidth at zero is worse than guessing: every decode estimate
+// divides by it, so the whole catalogue comes back at 0 tok/s and `suggest`
+// prints nothing at all on a machine that would in fact run most of it. A
+// deliberately conservative pair — a little below the slowest current-gen
+// discrete card in the table (RTX 4060, 272 GB/s) — under-promises instead,
+// and GPU.Estimated marks every number downstream as a guess.
+//
+// These are calibration knobs, not constants of nature: raise them as the
+// floor of the market moves.
+const (
+	FallbackBandwidthGBs = 300
+	FallbackTFLOPS       = 30
+)
+
+// EstimateUnknown supplies those fallbacks for a card that missed the table.
+// Capacity is deliberately not guessed — memory is the hard constraint, and
+// inventing it would report models as fitting when they do not.
+func EstimateUnknown(g *GPU) {
+	if g.BandwidthGBs == 0 {
+		g.BandwidthGBs = FallbackBandwidthGBs
+	}
+	if g.TFLOPS == 0 {
+		g.TFLOPS = FallbackTFLOPS
+	}
+	g.Estimated = true
+}
+
 func lookupApple(chip string) (bandwidth, tflops float64, ok bool) {
 	up := strings.ToUpper(chip)
 	bestLen := 0

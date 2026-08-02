@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/arch"
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/quant"
+	"github.com/fabiocicerchia/llm-fit/internal/arch"
+	"github.com/fabiocicerchia/llm-fit/internal/quant"
 )
 
 // The whole tool rests on the weight calculation, so it is checked against file

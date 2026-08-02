@@ -18,12 +18,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/arch"
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/catalog"
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/engine"
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/fit"
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/hw"
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/quant"
+	"github.com/fabiocicerchia/llm-fit/internal/arch"
+	"github.com/fabiocicerchia/llm-fit/internal/catalog"
+	"github.com/fabiocicerchia/llm-fit/internal/engine"
+	"github.com/fabiocicerchia/llm-fit/internal/fit"
+	"github.com/fabiocicerchia/llm-fit/internal/hw"
+	"github.com/fabiocicerchia/llm-fit/internal/quant"
 )
 
 type Request struct {

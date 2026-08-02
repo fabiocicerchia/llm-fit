@@ -8,13 +8,13 @@ import (
 	"os"
 	"strings"
 
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/advisor"
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/arch"
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/catalog"
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/engine"
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/fit"
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/hfapi"
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/hw"
+	"github.com/fabiocicerchia/llm-fit/internal/advisor"
+	"github.com/fabiocicerchia/llm-fit/internal/arch"
+	"github.com/fabiocicerchia/llm-fit/internal/catalog"
+	"github.com/fabiocicerchia/llm-fit/internal/engine"
+	"github.com/fabiocicerchia/llm-fit/internal/fit"
+	"github.com/fabiocicerchia/llm-fit/internal/hfapi"
+	"github.com/fabiocicerchia/llm-fit/internal/hw"
 )
 
 const usage = `llm-fit — which LLMs this machine can run, and how fast

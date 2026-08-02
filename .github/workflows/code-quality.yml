@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@v7
       # go-version-file reads both the `go` and `toolchain` lines in go.mod, so
       # the patched toolchain pinned there is the one CI builds with.
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: make lint # go vet + gofmt check

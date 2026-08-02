@@ -1,6 +1,7 @@
 # Examples
 
-Runnable, self-contained examples. Each subfolder (or file) should run with a
-single command and show one clear use case.
+- [`basic/`](basic) — the same model at 8k and 128k context, why an engine is
+  missing, and planning for a card you do not own.
 
-- `basic/` — minimal end-to-end example.
+There is nothing to download in any of these. `llm-fit` reads the machine and
+does arithmetic; it never fetches a model.

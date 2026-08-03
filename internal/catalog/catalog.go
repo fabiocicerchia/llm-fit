@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/arch"
+	"github.com/fabiocicerchia/llm-fit/internal/arch"
 )
 
 //go:embed models.json

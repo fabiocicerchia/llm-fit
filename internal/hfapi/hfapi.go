@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/arch"
+	"github.com/fabiocicerchia/llm-fit/internal/arch"
 )
 
 const base = "https://huggingface.co"

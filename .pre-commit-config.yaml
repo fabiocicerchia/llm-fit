@@ -1,28 +1,5 @@
 # Run `pre-commit install` once per clone.
 repos:
-  # Go hooks run the toolchain that is already installed rather than pulling a
-  # mirrored copy, so they use the version pinned in go.mod.
-  - repo: local
-    hooks:
-      - id: gofmt
-        name: gofmt
-        entry: gofmt -l -w
-        language: system
-        types: [go]
-      - id: go-vet
-        name: go vet
-        entry: go vet ./...
-        language: system
-        types: [go]
-        pass_filenames: false
-      - id: go-test
-        name: go test
-        entry: go test ./...
-        language: system
-        types: [go]
-        pass_filenames: false
-
-
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -38,3 +15,18 @@ repos:
     rev: v8.21.2
     hooks:
       - id: gitleaks
+
+  # Mirrors `make lint` — same two checks CI runs, before the commit exists.
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        entry: gofmt -l
+        language: system
+        types: [go]
+      - id: go-vet
+        name: go vet
+        entry: go vet ./...
+        language: system
+        types: [go]
+        pass_filenames: false

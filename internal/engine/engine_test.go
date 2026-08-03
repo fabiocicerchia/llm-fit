@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/hw"
+	"github.com/fabiocicerchia/llm-fit/internal/hw"
 )
 
 // The refusal message quotes the compute capability back at the user, so it has

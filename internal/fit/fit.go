@@ -23,8 +23,8 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/arch"
-	"github.com/fabiocicerchia/local-ai-lab/llm-fit/internal/quant"
+	"github.com/fabiocicerchia/llm-fit/internal/arch"
+	"github.com/fabiocicerchia/llm-fit/internal/quant"
 )
 
 const (

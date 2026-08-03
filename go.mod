@@ -1,4 +1,4 @@
-module github.com/fabiocicerchia/local-ai-lab/llm-fit
+module github.com/fabiocicerchia/llm-fit
 
 go 1.24
 

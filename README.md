@@ -78,7 +78,12 @@ llm-fit suggest -serving          # optimise for concurrency
 llm-fit check qwen3-30b           # every quant × runtime for one model
 llm-fit check -hf Qwen/Qwen3-14B  # any model, read from Hugging Face
 llm-fit engines                   # what this machine can run, and why not
+llm-fit models                    # the built-in catalogue
 ```
+
+`-batch N` for concurrent sequences, `-engine NAME` to restrict to one runtime,
+`-top N` for list length, and `-min LEVEL` / `-min-quality N` for the floors
+below which a result is not worth showing (default: `usable`, and no sub-3-bit).
 
 Plan for hardware you do not have yet with `-gpu`, which takes VRAM, bandwidth
 and compute together from the spec table — overriding VRAM alone would model

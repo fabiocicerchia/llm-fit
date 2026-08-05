@@ -143,7 +143,7 @@ func (e Engine) RunsOn(m hw.Machine) (bool, string) {
 	if len(e.Vendors) == 0 {
 		return true, ""
 	}
-	var best hw.Vendor = hw.Unknown
+	best := hw.Unknown
 	var cc float64
 	for _, g := range m.GPUs {
 		for _, v := range e.Vendors {

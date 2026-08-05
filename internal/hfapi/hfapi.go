@@ -190,7 +190,7 @@ func getJSON(c *http.Client, id, file string, v any) error {
 	if err != nil {
 		return fmt.Errorf("fetching %s: %w", id, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusOK:

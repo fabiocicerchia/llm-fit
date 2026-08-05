@@ -94,7 +94,7 @@ func Detect() Machine {
 
 func detectLinuxCPU(m *Machine) {
 	if f, err := os.Open("/proc/cpuinfo"); err == nil {
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		s := bufio.NewScanner(f)
 		for s.Scan() {
 			if name, val, ok := strings.Cut(s.Text(), ":"); ok && strings.TrimSpace(name) == "model name" {
@@ -104,7 +104,7 @@ func detectLinuxCPU(m *Machine) {
 		}
 	}
 	if f, err := os.Open("/proc/meminfo"); err == nil {
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		s := bufio.NewScanner(f)
 		for s.Scan() {
 			key, val, ok := strings.Cut(s.Text(), ":")

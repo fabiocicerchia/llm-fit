@@ -62,3 +62,68 @@ which vendors, whether it offloads to CPU — are what change the answer.
 
 **A GPU**: a row in `internal/hw/gpudb.go`. Bandwidth is the number that
 matters; TFLOPS only affects prefill.
+
+## Fitting is the easy half
+
+Most calculators answer "does it fit". That is the question that matters least.
+A 70B at Q4_K_M *fits* on a 12GB card with enough system RAM — llama.cpp will
+load it, spill sixty layers into DDR, and generate at two tokens per second,
+which is slower than you read.
+
+So every answer here carries a speed estimate, and the speed estimate is what
+decides whether a model is suggested at all.
+
+## The arithmetic
+
+**Decode is memory-bandwidth bound.** Generating one token reads every active
+weight and the entire KV cache, once. So tokens per second is bandwidth divided
+by bytes-read-per-token — not FLOPs. It is why a 4090 and an A100 are far
+closer in single-stream chat than their compute suggests, and why a second GPU
+buys capacity rather than speed.
+
+**Prefill is compute bound.** Ingesting a prompt is a matrix-matrix product over
+many tokens at once, so it scales with FLOPs. A card can be slow to chat and
+quick to read a document.
+
+Four corrections do most of the work, and skipping any one of them produces
+confidently wrong advice:
+
+| | |
+|---|---|
+| **Quantization is not the number in its name** | Q4_K_M is 4.83 bits per weight, not 4. Block scales, and higher-precision embeddings, are the difference between predicting 35GB for a 70B and the 42.5GB it really is. |
+| **Grouped-query attention** | Llama-3-70B has 64 query heads and 8 KV heads. Sizing its cache off query heads overstates it 8×. DeepSeek's MLA is a different formula again — roughly a fourteenth of the GQA equivalent. |
+| **Mixture of experts** | Qwen3-30B-A3B occupies 30B of memory and reads 3.3B per token. Memory of a 30B, speed of a 3B — which is why it is often the best answer on a small card, and why it tops the list above. |
+| **The KV cache is not a rounding error** | At 128k context an 8B model's cache exceeds its weights, and generation slows as the conversation grows. Quantizing the cache to `q8_0` usually buys more than dropping a quantization level. |
+
+The memory model is checked against published GGUF file sizes rather than
+against itself — see `internal/fit/fit_test.go`, which asserts predictions land
+within 3% of real releases for Llama-2, Llama-3 and Mistral across seven
+quantizations.
+
+## Runtimes
+
+llama.cpp, Ollama, vLLM, SGLang, ExLlamaV2, MLX, TensorRT-LLM. The differences
+that change the answer are modelled, not just listed:
+
+- **vLLM and SGLang do not usefully offload.** On a 12GB card a 70B is out of
+  reach whatever the system RAM. `llm-fit` says so rather than reporting a
+  number for a configuration that will fail to load.
+- **ExLlamaV2 is NVIDIA-only**, MLX is Apple-only, FP8 needs Ada or Hopper.
+  Engines the machine cannot run are shown with the reason.
+- **Serving is a different question.** `-serving` switches the ranking from
+  single-stream latency to how many concurrent requests the leftover memory
+  holds, and drops the runtimes that are not built for it.
+
+## What the numbers are, and are not
+
+Estimates from bandwidth and compute, not measurements. On hardware in the
+built-in table they are usually within about 20% — the right ballpark for
+choosing, not a benchmark. Three things push them off:
+
+- A GPU not in the spec table has no known bandwidth. It is flagged, and the
+  speed figures that follow are guesses.
+- Speculative decoding, prefix caching and batch-of-one assumptions all move
+  real throughput.
+- The quality ranking (`Score`) is a judgement, not a measurement. It encodes
+  that a 32B at Q4_K_M beats an 8B at Q8_0, and that neither is beaten by a
+  109B at 1.75 bits. Those trades are pinned in `advisor_test.go`.

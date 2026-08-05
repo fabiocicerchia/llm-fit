@@ -62,3 +62,15 @@ licence.
 ./bin/llm-fit suggest -gpu "RTX 4090"
 ./bin/llm-fit suggest -gpu "A100 80GB" -ram 256 -serving
 ```
+
+## Development
+
+```sh
+make test   # go test ./...
+make lint   # vet + gofmt
+make demo   # detect, then suggest, on this machine
+```
+
+No dependencies outside the standard library. `internal/fit` is the arithmetic
+and holds most of the tests; `internal/advisor` is the ranking and holds the
+rest.

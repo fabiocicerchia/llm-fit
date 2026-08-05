@@ -65,7 +65,7 @@ func FuzzValidateIDKeepsTheURLOnHuggingFace(f *testing.F) {
 		raw := base + "/" + id + "/resolve/main/config.json"
 		u, err := url.Parse(raw)
 		if err != nil {
-			t.Fatalf("accepted id %q produced an unparseable URL %q: %v", id, raw, err)
+			t.Fatalf("accepted id %q produced an unparsable URL %q: %v", id, raw, err)
 		}
 		if u.Scheme != "https" || u.Host != "huggingface.co" {
 			t.Fatalf("accepted id %q redirected the request to %s://%s", id, u.Scheme, u.Host)

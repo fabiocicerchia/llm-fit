@@ -5,6 +5,7 @@
 [![Security](https://github.com/fabiocicerchia/llm-fit/actions/workflows/security.yml/badge.svg)](https://github.com/fabiocicerchia/llm-fit/actions/workflows/security.yml)
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/fabiocicerchia/llm-fit/badge)](https://securityscorecards.dev/viewer/?uri=github.com/fabiocicerchia/llm-fit)
+[![CI carbon](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/fabiocicerchia/llm-fit/gh-pages/badge.json)](.github/workflows/carbon-badge.yml)
 
 **Which LLMs this machine can actually run, and how fast.** Reads the hardware,
 does the memory and bandwidth arithmetic, and recommends a model, a

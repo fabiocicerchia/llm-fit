@@ -1,0 +1,6 @@
+[default]
+# release-please writes CHANGELOG entries as markdown links whose label is the
+# abbreviated commit SHA — "([ba2dccd](https://github.com/...))". typos reads
+# those hex strings as words ("ba" -> "by"/"be"). Ignore SHA-shaped link labels
+# rather than skipping CHANGELOG.md, so its prose is still checked.
+extend-ignore-re = ["\\[[0-9a-f]{7,40}\\]"]

@@ -285,7 +285,7 @@ func Read(path string) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only: a failed close has nothing to report
 	return read(f)
 }
 

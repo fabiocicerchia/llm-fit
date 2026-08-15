@@ -17,8 +17,8 @@ import (
 // Qwen2.5-7B-Instruct-Q4_K_M header shape.
 type builder struct{ b bytes.Buffer }
 
-func (w *builder) u32(v uint32) { binary.Write(&w.b, binary.LittleEndian, v) }
-func (w *builder) u64(v uint64) { binary.Write(&w.b, binary.LittleEndian, v) }
+func (w *builder) u32(v uint32) { _ = binary.Write(&w.b, binary.LittleEndian, v) }
+func (w *builder) u64(v uint64) { _ = binary.Write(&w.b, binary.LittleEndian, v) }
 
 func (w *builder) str(s string) {
 	w.u64(uint64(len(s)))
@@ -55,7 +55,7 @@ func (w *builder) kvF32Array(key string, n int) {
 	w.u32(typeFloat32)
 	w.u64(uint64(n))
 	for i := 0; i < n; i++ {
-		binary.Write(&w.b, binary.LittleEndian, math.Float32bits(1.5))
+		_ = binary.Write(&w.b, binary.LittleEndian, math.Float32bits(1.5))
 	}
 }
 

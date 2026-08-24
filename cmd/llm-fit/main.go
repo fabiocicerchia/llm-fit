@@ -13,8 +13,10 @@ import (
 	"github.com/fabiocicerchia/llm-fit/internal/catalog"
 	"github.com/fabiocicerchia/llm-fit/internal/engine"
 	"github.com/fabiocicerchia/llm-fit/internal/fit"
+	"github.com/fabiocicerchia/llm-fit/internal/gguf"
 	"github.com/fabiocicerchia/llm-fit/internal/hfapi"
 	"github.com/fabiocicerchia/llm-fit/internal/hw"
+	"github.com/fabiocicerchia/llm-fit/internal/quant"
 )
 
 const usage = `llm-fit — which LLMs this machine can run, and how fast
@@ -22,6 +24,7 @@ const usage = `llm-fit — which LLMs this machine can run, and how fast
   llm-fit detect                 what hardware is here, and what it implies
   llm-fit suggest                models that run well, best first
   llm-fit check <model>          every quantization and runtime for one model
+  llm-fit check <file.gguf>      read the shape and quant from a local GGUF file
   llm-fit engines                runtime support matrix for this machine
   llm-fit models                 the built-in catalogue
 
@@ -216,14 +219,32 @@ func cmdSuggest(m hw.Machine, req advisor.Request, top int, asJSON bool) {
 func cmdCheck(m hw.Machine, req advisor.Request, query string, asJSON, useHF bool) {
 	var model arch.Model
 	var ok bool
-	if useHF {
+	var fileFormat *quant.Format
+	switch {
+	// A path to a file on disk is unambiguous — no catalogue entry or repo id
+	// looks like one — so it needs no flag to select it, and it describes the
+	// copy about to be loaded rather than the model in the abstract.
+	case isFile(query):
+		info, err := gguf.Read(query)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		model, ok = info.Model(), true
+		if f, found := info.Format(); found {
+			fileFormat = &f
+		} else {
+			fmt.Fprintf(os.Stderr, "note: %s declares file type %d, which is not in the quant table — "+
+				"sizing every format instead of the one in the file\n", query, info.FileType)
+		}
+	case useHF:
 		fetched, err := hfapi.Fetch(query)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		model, ok = fetched, true
-	} else {
+	default:
 		model, ok = catalog.Find(query)
 	}
 	if !ok {
@@ -240,6 +261,19 @@ func cmdCheck(m hw.Machine, req advisor.Request, query string, asJSON, useHF boo
 	}
 
 	opts := advisor.Inspect(model, m, req)
+	// The file is one quantization, so plans for the other twenty describe a
+	// download the caller has not made. Filtered after Inspect rather than
+	// inside it: the ranking is the advisor's business, the narrowing is this
+	// command's.
+	if fileFormat != nil {
+		var only []advisor.Option
+		for _, o := range opts {
+			if o.Format.Name == fileFormat.Name {
+				only = append(only, o)
+			}
+		}
+		opts = only
+	}
 	if asJSON {
 		emit(opts)
 		return
@@ -444,4 +478,12 @@ func emit(v any) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(v)
+}
+
+// isFile reports whether the query names a readable file rather than a model
+// id. Directories do not count: "check ./models" is a mistake worth an error
+// about an unknown model, not an attempt to parse a directory as GGUF.
+func isFile(query string) bool {
+	st, err := os.Stat(query)
+	return err == nil && st.Mode().IsRegular()
 }

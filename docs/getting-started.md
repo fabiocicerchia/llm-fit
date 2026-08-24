@@ -53,6 +53,15 @@ To see every option for one model, including the ones that do not fit:
 ./bin/llm-fit check -hf mistralai/Mistral-Small-24B-Instruct-2501
 ```
 
+Or point it at a file you have already downloaded. The header carries the
+architecture and the tensor directory gives an exact parameter count, so this
+describes the copy on disk rather than the model in the abstract — including
+which quantization was baked into it, so only that one is reported:
+
+```sh
+./bin/llm-fit check ~/models/Qwen2.5-7B-Instruct-Q4_K_M.gguf
+```
+
 Gated repositories (Llama, Gemma) need `HF_TOKEN` set after accepting the
 licence.
 

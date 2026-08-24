@@ -45,6 +45,7 @@ llm-fit suggest -ctx 32768 -kv q8_0
 llm-fit suggest -serving          # optimise for concurrency
 llm-fit check qwen3-30b           # every quant × runtime for one model
 llm-fit check -hf Qwen/Qwen3-14B  # any model, read from Hugging Face
+llm-fit check ~/models/q4.gguf    # the file on disk: its own shape and quant
 llm-fit engines                   # what this machine can run, and why not
 llm-fit models                    # the built-in catalogue
 ```

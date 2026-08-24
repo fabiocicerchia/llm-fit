@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0](https://github.com/fabiocicerchia/llm-fit/compare/v1.0.1...v1.1.0) (2026-08-24)
+
+
+### Features
+
+* **gguf:** read the model shape from a local GGUF file ([#23](https://github.com/fabiocicerchia/llm-fit/issues/23)) ([cc41f21](https://github.com/fabiocicerchia/llm-fit/commit/cc41f21e999e8a52bc745cb02d0041e1739ae406))
+
 ## [1.0.1](https://github.com/fabiocicerchia/llm-fit/compare/v1.0.0...v1.0.1) (2026-08-13)
 
 

@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0](https://github.com/fabiocicerchia/llm-fit/compare/v1.1.0...v1.2.0) (2026-08-25)
+
+
+### Features
+
+* **docs:** build the docs site in Actions and drop Read the Docs ([#33](https://github.com/fabiocicerchia/llm-fit/issues/33)) ([da6eaf6](https://github.com/fabiocicerchia/llm-fit/commit/da6eaf66546517a4f0c6847461cc0bfe23083aee))
+
 ## [1.1.0](https://github.com/fabiocicerchia/llm-fit/compare/v1.0.1...v1.1.0) (2026-08-24)
 
 

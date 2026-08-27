@@ -38,6 +38,12 @@ const magic = 0x46554747
 // for ever.
 const headerLimit = 64 << 20
 
+// maxDim bounds a single tensor dimension. The largest real one is a
+// vocabulary row — a few hundred thousand — so 2^40 is far past anything a
+// converter emits while still leaving the product of four of them well inside
+// int64.
+const maxDim = 1 << 40
+
 // maxTensors is the same guard for the tensor directory: a 405B model has a few
 // thousand tensors, and each entry costs a name plus five numbers.
 const maxTensors = 1 << 20
@@ -257,6 +263,12 @@ func (d *reader) value(t uint32) (any, error) {
 		if elem != typeString {
 			return nil, fmt.Errorf("unsupported array element type %d", elem)
 		}
+		// The scalar branch above bounds its count; this one did not, so a
+		// declared length of 2^64-1 was walked one string at a time until the
+		// read hit EOF. Same limit, same message.
+		if count > uint64(headerLimit) {
+			return nil, errors.New("array length in header is implausible")
+		}
 		for i := uint64(0); i < count; i++ {
 			if _, err := d.str(); err != nil {
 				return nil, err
@@ -267,13 +279,32 @@ func (d *reader) value(t uint32) (any, error) {
 	return nil, fmt.Errorf("unknown metadata type %d", t)
 }
 
+// asInt reads a header value as a model hyperparameter — layer count, hidden
+// size, head count, context length.
+//
+// Everything it reads came off disk unvalidated, so it reports 0 for anything
+// outside the plausible range rather than converting it. A bare int(n) on a
+// uint64 near the top of its range yields a negative layer count, which the
+// downstream arithmetic would go on to use as if it meant something. 0 is the
+// value the caller already treats as "the key isn't there", and read() turns a
+// missing block_count or embedding_length into an error — so a hostile value
+// degrades to an honest complaint about the file instead of a wrong answer.
 func asInt(v any) int {
 	switch n := v.(type) {
 	case uint64:
+		if n > math.MaxInt32 {
+			return 0
+		}
 		return int(n)
 	case int64:
+		if n < 0 || n > math.MaxInt32 {
+			return 0
+		}
 		return int(n)
 	case float64:
+		if n < 0 || n > math.MaxInt32 {
+			return 0
+		}
 		return int(n)
 	}
 	return 0
@@ -385,6 +416,12 @@ func read(f io.Reader) (Info, error) {
 		if rank > 4 {
 			return Info{}, fmt.Errorf("tensor %q has rank %d", name, rank)
 		}
+		// Each dim comes off disk as a raw uint64 and the product is the
+		// parameter count every later estimate is built on. int64(dv) on a
+		// dim past 2^63 is negative, and four plausible-looking dims can
+		// overflow the product outright — either way the tool would report a
+		// confident, wrong model size. Both are refused: this reads
+		// third-party model files, and a bad one should say so.
 		n := int64(1)
 		dims := make([]int64, 0, rank)
 		for j := uint32(0); j < rank; j++ {
@@ -392,8 +429,15 @@ func read(f io.Reader) (Info, error) {
 			if err != nil {
 				return Info{}, fmt.Errorf("tensor %q: %w", name, err)
 			}
-			dims = append(dims, int64(dv))
-			n *= int64(dv)
+			if dv > maxDim {
+				return Info{}, fmt.Errorf("tensor %q dimension %d is implausible", name, dv)
+			}
+			dim := int64(dv)
+			dims = append(dims, dim)
+			if dim != 0 && n > math.MaxInt64/dim {
+				return Info{}, fmt.Errorf("tensor %q shape overflows the parameter count", name)
+			}
+			n *= dim
 		}
 		if _, err := d.u32(); err != nil { // ggml type
 			return Info{}, fmt.Errorf("tensor %q: %w", name, err)

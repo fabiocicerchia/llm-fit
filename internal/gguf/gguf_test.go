@@ -281,3 +281,90 @@ func TestReadFromDisk(t *testing.T) {
 		t.Error("want an error for a missing file")
 	}
 }
+
+// hostileFile builds a minimal but valid-looking header whose single tensor
+// carries the dims given. Everything else is the smallest thing read() accepts,
+// so a failure can only come from the shape.
+func hostileFile(dims ...uint64) []byte {
+	var w builder
+	w.u32(magic)
+	w.u32(3)
+	w.u64(1) // one tensor
+	w.u64(3) // metadata count
+	w.kvStr("general.architecture", "llama")
+	w.kvU32("llama.block_count", 2)
+	w.kvU32("llama.embedding_length", 32)
+	w.tensor("token_embd.weight", dims...)
+
+	return w.b.Bytes()
+}
+
+// A GGUF file is third-party input — llm-fit is pointed at models pulled from
+// Hugging Face. Tensor dims are raw uint64s off disk and their product is the
+// parameter count every later estimate rests on, so a shape that cannot be
+// multiplied has to be refused. Reporting a confident, wrong model size is the
+// one outcome this repo cannot have: the arithmetic is the product.
+func TestRejectsImplausibleTensorShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		dims []uint64
+		want string
+	}{
+		{"dim past int64, reads as negative", []uint64{1 << 63}, "implausible"},
+		{"dim at the top of uint64", []uint64{math.MaxUint64}, "implausible"},
+		{"product overflows int64", []uint64{1 << 39, 1 << 39}, "overflow"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := read(bytes.NewReader(hostileFile(tc.dims...)))
+			if err == nil {
+				t.Fatal("want an error, got a reading")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// A hyperparameter past int32 used to wrap: int(n) on a large uint64 yields a
+// negative layer count, which the memory arithmetic would then use as a number.
+// asInt reports 0 instead, which read() already treats as "the key is missing"
+// — so the file is rejected by name rather than given a wrong size silently.
+func TestImplausibleHyperparameterIsNotWrapped(t *testing.T) {
+	var w builder
+	w.u32(magic)
+	w.u32(3)
+	w.u64(0)
+	w.u64(3)
+	w.kvStr("general.architecture", "llama")
+	w.str("llama.block_count")
+	w.u32(typeUint64)
+	w.u64(math.MaxUint64)
+	w.kvU32("llama.embedding_length", 32)
+
+	_, err := read(bytes.NewReader(w.b.Bytes()))
+	if err == nil || !strings.Contains(err.Error(), "block_count") {
+		t.Errorf("err = %v, want it to name the missing block_count", err)
+	}
+}
+
+// The scalar-array branch bounded its declared length; the string branch did
+// not, so a length of 2^64-1 was walked one string at a time to EOF.
+func TestRejectsImplausibleStringArrayLength(t *testing.T) {
+	var w builder
+	w.u32(magic)
+	w.u32(3)
+	w.u64(0)
+	w.u64(2)
+	w.kvStr("general.architecture", "llama")
+	w.str("tokenizer.ggml.tokens")
+	w.u32(typeArray)
+	w.u32(typeString)
+	w.u64(math.MaxUint64)
+
+	_, err := read(bytes.NewReader(w.b.Bytes()))
+	if err == nil || !strings.Contains(err.Error(), "implausible") {
+		t.Errorf("err = %v, want the array length refused", err)
+	}
+}

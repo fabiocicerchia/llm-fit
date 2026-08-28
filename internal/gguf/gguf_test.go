@@ -330,7 +330,7 @@ func TestRejectsImplausibleTensorShapes(t *testing.T) {
 // A hyperparameter past int32 used to wrap: int(n) on a large uint64 yields a
 // negative layer count, which the memory arithmetic would then use as a number.
 // asInt reports 0 instead, which read() already treats as "the key is missing"
-// — so the file is rejected by name rather than silently mis-sized.
+// — so the file is rejected by name rather than given a wrong size silently.
 func TestImplausibleHyperparameterIsNotWrapped(t *testing.T) {
 	var w builder
 	w.u32(magic)

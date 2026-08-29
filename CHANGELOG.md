@@ -5,6 +5,14 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1](https://github.com/fabiocicerchia/llm-fit/compare/v1.2.0...v1.2.1) (2026-08-29)
+
+
+### Bug Fixes
+
+* **gguf:** refuse a hostile header instead of computing a wrong model size ([#35](https://github.com/fabiocicerchia/llm-fit/issues/35)) ([a4fa6e2](https://github.com/fabiocicerchia/llm-fit/commit/a4fa6e249deae92e5ad3d9dfe12519d9eb273a47))
+* unblock quality and clear the Scorecard pinned-dependencies finding ([#37](https://github.com/fabiocicerchia/llm-fit/issues/37)) ([f143689](https://github.com/fabiocicerchia/llm-fit/commit/f14368974901f25e8a155d092d8adb002a243fb8))
+
 ## [1.2.0](https://github.com/fabiocicerchia/llm-fit/compare/v1.1.0...v1.2.0) (2026-08-25)
 
 

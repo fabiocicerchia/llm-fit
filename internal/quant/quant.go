@@ -124,3 +124,14 @@ var KVCacheBytesPerElement = map[string]float64{
 	"q5_1": 24.0 / 32.0,
 	"q4_0": 18.0 / 32.0, // 16 packed nibbles plus one fp16 scale
 }
+
+// KVTypes lists the accepted cache precisions, sorted, for validation and for
+// telling the caller what they should have typed.
+func KVTypes() []string {
+	out := make([]string, 0, len(KVCacheBytesPerElement))
+	for k := range KVCacheBytesPerElement {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}

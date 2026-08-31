@@ -92,6 +92,16 @@ func main() {
 		}
 	}
 
+	// Validate before anything divides by it. An unknown -kv silently fell back
+	// to 2.0 bytes at three separate call sites, so "-kv fp16" or "-kv Q8_0"
+	// quietly sized every cache as f16 and reported a context ceiling roughly
+	// half of what the flag asked for. Wrong answers are worse than no answer.
+	if _, ok := quant.KVCacheBytesPerElement[*kv]; !ok {
+		fmt.Fprintf(os.Stderr, "unknown -kv %q; valid values are %s\n",
+			*kv, strings.Join(quant.KVTypes(), ", "))
+		os.Exit(2)
+	}
+
 	machine := hw.Detect()
 	applyOverrides(&machine, *gpuName, *vramOverride, *ramOverride, *ramBW)
 
@@ -187,7 +197,10 @@ func cmdSuggest(m hw.Machine, req advisor.Request, top int, asJSON bool) {
 		opts = opts[:top]
 	}
 
-	fmt.Printf("Context %s, KV %s%s. Ranked by capability among plans that run %s or better.\n\n",
+	// "capability" alone would be a lie: Score multiplies parameter count by
+	// quantization quality and by a speed term, so a model that is bigger but
+	// slower can and does lose.
+	fmt.Printf("Context %s, KV %s%s. Ranked by capability and speed among plans that run %s or better.\n\n",
 		thousands(req.Ctx), req.KVType, servingNote(req.Serving), req.MinVerdict)
 
 	fmt.Printf("%-34s %-11s %-9s %8s %9s %7s  %s\n",
@@ -213,7 +226,7 @@ func cmdSuggest(m hw.Machine, req advisor.Request, top int, asJSON bool) {
 	for _, r := range best.Estimate.Reasons {
 		fmt.Printf("  %s\n", r)
 	}
-	fmt.Printf("  %s\n", best.Engine.InstallHint)
+	fmt.Printf("  %s\n", best.Engine.HintFor(m.OS))
 }
 
 func cmdCheck(m hw.Machine, req advisor.Request, query string, asJSON, useHF bool) {

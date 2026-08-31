@@ -153,25 +153,31 @@ func TestCPUOnlyMachineGetsCPUOnlyAdvice(t *testing.T) {
 	}
 }
 
-// The MoE result is the non-obvious one worth protecting: on a small card a
-// 30B that reads 3.3B per token beats dense models half its size, because
-// offloading it costs far less per token.
-func TestMoEBeatsDenseModelsOfSimilarSizeOnASmallCard(t *testing.T) {
+// This test used to assert the opposite — that on a small card a 30B reading
+// 3.3B per token beats dense models half its size, "because offloading it costs
+// far less per token". Measurement says otherwise: offloading an MoE costs far
+// MORE per byte, because each CPU layer re-gathers its experts every token.
+// Qwen3-30B-A3B on a 12GB RTX 3060 with a Ryzen 3700X ran at 2.4 tok/s, against
+// the 19 tok/s this ranking was built on. See cpuGatherEfficiency in fit.go.
+//
+// So the property worth protecting is the inverse: a model that has to spill
+// onto the CPU must not outrank one that fits in VRAM, however good its active
+// parameter count looks. An MoE that fits entirely on the card is a different
+// question, and stays protected by TestMoEDecodesFasterThanItsSize.
+// A spilled MoE can still be a legitimate mid-table entry: how bad it gets
+// depends on how many layers land on the CPU, and a mild split is genuinely
+// borderline rather than hopeless. What it must not be again is the headline —
+// "Start here" is the line people act on, and pointing it at a 2.4 tok/s plan
+// is the specific failure this guards.
+func TestSpilledMoEIsNotTheTopPickOnASmallCard(t *testing.T) {
 	opts := Suggest(rtx3060(), req())
-	var moeRank, denseRank = -1, -1
-	for i, o := range opts {
-		if o.Model.IsMoE() && moeRank == -1 {
-			moeRank = i
-		}
-		if !o.Model.IsMoE() && o.Model.Params > 20_000_000_000 && denseRank == -1 {
-			denseRank = i
-		}
+	if len(opts) == 0 {
+		t.Skip("nothing cleared the bar")
 	}
-	if moeRank == -1 {
-		t.Skip("no MoE cleared the bar on this configuration")
-	}
-	if denseRank != -1 && moeRank > denseRank {
-		t.Errorf("the MoE ranked %d, behind a similarly sized dense model at %d", moeRank, denseRank)
+	if top := opts[0]; top.Model.IsMoE() && !top.Estimate.FullyOnGPU {
+		t.Errorf("Start here: %s at %.0f tok/s with %d of %d layers on the CPU",
+			top.Model.Name, top.Estimate.DecodeTPS,
+			top.Estimate.TotalLayers-top.Estimate.LayersOnGPU, top.Estimate.TotalLayers)
 	}
 }
 

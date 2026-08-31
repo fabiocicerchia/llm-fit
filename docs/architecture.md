@@ -124,6 +124,14 @@ choosing, not a benchmark. Three things push them off:
   speed figures that follow are guesses.
 - Speculative decoding, prefix caching and batch-of-one assumptions all move
   real throughput.
+- **An MoE with experts on the CPU is the one case measured against a stopwatch,
+  and it needed its own constant.** Scaling bytes by the active fraction is
+  right on the GPU and wrong on the CPU, where each layer re-gathers its experts
+  every token. Under a single shared efficiency factor, Qwen3-30B-A3B on a 12GB
+  card predicted 19 tok/s and delivered 2.4 — enough to rank it the best option
+  on a machine it is unusable on. `cpuGatherEfficiency` in `internal/fit/fit.go`
+  now separates the two, but it is fitted to one machine. Treat MoE offload
+  figures as the least trustworthy numbers here until there are more.
 - The quality ranking (`Score`) is a judgement, not a measurement. It encodes
   that a 32B at Q4_K_M beats an 8B at Q8_0, and that neither is beaten by a
   109B at 1.75 bits. Those trades are pinned in `advisor_test.go`.

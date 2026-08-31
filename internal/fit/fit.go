@@ -214,6 +214,47 @@ type Engine struct {
 	MemoryFraction float64
 }
 
+// CPU decode efficiency, as a fraction of measured memcpy bandwidth.
+//
+// Dense models stream: the CPU-resident layers are read one contiguous weight
+// matrix after another. Fewer, wider cores and no coalesced access cost roughly
+// half of what a GPU manages, hence 0.55.
+//
+// MoE models do not stream, and this is the single largest error in the model
+// if you let them share a constant. Scaling bytes by the active fraction is
+// correct on the GPU and badly optimistic on the CPU: routing is re-decided per
+// layer per token, so every CPU layer performs a fresh gather of a handful of
+// experts out of the full resident bank, with no reuse or prefetch between
+// tokens, and per-expert call overhead dominates a matmul this small. The CPU
+// side stops being bandwidth-bound at all.
+//
+// 0.08 is measured, not derived. Qwen3-30B-A3B at Q4_K_M, 26 of 48 layers on an
+// RTX 3060 and 22 on a Ryzen 3700X with 43 GB/s memcpy bandwidth, 16k context
+// with a q8_0 cache, ran at 2.4 tok/s — 3.3 GB/s effective, or 0.078 of
+// measured. Under the old flat 0.55 the same plan predicted 19 tok/s: a 7x
+// overestimate, and enough to rank that model first on a machine where it is
+// unusable. It is a floor, not a best case; swap was still draining during the
+// run that produced it.
+//
+// Caveats worth keeping honest: one machine is one data point, and it replaces
+// a constant that had none. It is also applied to the KV term, which really
+// does stream — folding that into a single number is what makes the constant
+// reproduce the measurement, and splitting the two is not justified until there
+// is more than one machine to fit against.
+const (
+	cpuStreamEfficiency = 0.55
+	cpuGatherEfficiency = 0.08
+)
+
+// cpuEfficiency picks between them. Only reached when layers actually land on
+// the CPU, so an MoE that fits entirely in VRAM is unaffected.
+func cpuEfficiency(m arch.Model) float64 {
+	if m.IsMoE() {
+		return cpuGatherEfficiency
+	}
+	return cpuStreamEfficiency
+}
+
 // EstimatePlan runs the whole calculation for one plan.
 func EstimatePlan(p Plan, e Engine) Estimate {
 	var est Estimate
@@ -284,9 +325,7 @@ func EstimatePlan(p Plan, e Engine) Estimate {
 		secondsPerToken += (weightsRead + kvRead) * gpuShare / (e.MBU * gpuBW * 1e9)
 	}
 	if cpuShare > 0 && cpuBW > 0 {
-		// CPU inference achieves a lower fraction of its already lower
-		// bandwidth: fewer, wider cores and no coalesced access.
-		secondsPerToken += (weightsRead + kvRead) * cpuShare / (0.55 * cpuBW * 1e9)
+		secondsPerToken += (weightsRead + kvRead) * cpuShare / (cpuEfficiency(m) * cpuBW * 1e9)
 	}
 	if secondsPerToken > 0 {
 		est.DecodeTPS = 1 / secondsPerToken
@@ -313,14 +352,29 @@ func EstimatePlan(p Plan, e Engine) Estimate {
 	est.Concurrency = concurrency(m, p, e, gpuTotal, est.WeightBytes, est.OverheadBytes)
 
 	est.Verdict = verdictFor(est.DecodeTPS)
-	est.Reasons = append(est.Reasons, explain(est, p, e, cpuLayers)...)
+	est.Reasons = append(est.Reasons, explain(est, p, e, cpuLayers, cpuTotal)...)
 	return est
 }
 
-func explain(est Estimate, p Plan, e Engine, cpuLayers int) []string {
+// cpuCachePressure is the share of free RAM the CPU-side weights must hold to
+// stay resident. Past this, treat the plan as at risk rather than merely slow.
+const cpuCachePressure = 0.7
+
+func explain(est Estimate, p Plan, e Engine, cpuLayers int, cpuTotal int64) []string {
 	var out []string
 	if cpuLayers > 0 {
 		out = append(out, plural(cpuLayers)+" running on the CPU: every token waits on system RAM, which is why this is slow")
+	}
+	// Fitting is not the same as staying resident. llama.cpp mmaps the weight
+	// file, so CPU-side layers live in reclaimable page cache — the same pages
+	// MemAvailable counted as free for everything else. When they are most of
+	// what is free, ordinary memory pressure evicts them and every token starts
+	// faulting back off the SSD. That is not a gentle slowdown: measured on a
+	// 30GB box it was the difference between 1.4 and 2.4 tok/s, and the machine
+	// spent the gap in sustained major faults with swap pinned at 100%.
+	if est.CPUBytes > 0 && cpuTotal > 0 &&
+		float64(est.CPUBytes) > cpuCachePressure*float64(cpuTotal) {
+		out = append(out, "the CPU-side weights need most of the free RAM to stay cached; close other memory-hungry programs or expect it to fault off disk mid-generation")
 	}
 	if est.KVBytes > est.WeightBytes {
 		out = append(out, "the KV cache is larger than the weights at this context — quantize the cache before dropping to a smaller quant")

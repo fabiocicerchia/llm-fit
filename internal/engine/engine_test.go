@@ -60,3 +60,30 @@ func TestAppleOnlyAndNvidiaOnlyEnginesRefuseTheWrongVendor(t *testing.T) {
 		t.Error("llama.cpp refused a CPU-only machine, which is the case it exists for")
 	}
 }
+
+// The install hint used to be a single string, so `brew install llama.cpp` was
+// printed on Linux and Windows — on a machine whose OS detection had already
+// run and printed the right answer one line earlier.
+func TestInstallHintFollowsTheOS(t *testing.T) {
+	var llama Engine
+	for _, e := range All {
+		if e.Name == "llama.cpp" {
+			llama = e
+		}
+	}
+	if llama.Name == "" {
+		t.Fatal("llama.cpp missing from the engine list")
+	}
+	if h := llama.HintFor("linux"); strings.Contains(h, "brew") {
+		t.Errorf("linux hint suggests brew: %q", h)
+	}
+	if h := llama.HintFor("darwin"); !strings.Contains(h, "brew") {
+		t.Errorf("macOS hint should use brew, got %q", h)
+	}
+	// An engine with no per-OS table falls back to the shared hint.
+	for _, e := range All {
+		if e.Name == "vLLM" && e.HintFor("linux") != e.InstallHint {
+			t.Error("engines without an OS table should return InstallHint unchanged")
+		}
+	}
+}

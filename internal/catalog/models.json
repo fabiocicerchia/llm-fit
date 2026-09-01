@@ -15,7 +15,7 @@
   {"id":"Qwen/Qwen2.5-Coder-32B-Instruct","name":"Qwen2.5 Coder 32B","family":"qwen","params":32763876352,"layers":64,"hidden":5120,"heads":40,"kv_heads":8,"head_dim":128,"vocab":152064,"ctx":32768},
   {"id":"Qwen/Qwen3-8B","name":"Qwen3 8B","family":"qwen","params":8190735360,"layers":36,"hidden":4096,"heads":32,"kv_heads":8,"head_dim":128,"vocab":151936,"ctx":32768},
   {"id":"Qwen/Qwen3-32B","name":"Qwen3 32B","family":"qwen","params":32762123264,"layers":64,"hidden":5120,"heads":64,"kv_heads":8,"head_dim":128,"vocab":151936,"ctx":32768},
-  {"id":"Qwen/Qwen3-30B-A3B","name":"Qwen3 30B-A3B (MoE)","family":"qwen","params":30532122624,"active_params":3338342400,"layers":48,"hidden":2048,"heads":32,"kv_heads":4,"head_dim":128,"vocab":151936,"ctx":32768,"experts":128,"experts_active":8,"notes":"reads 3.3B per token: memory of a 30B, speed of a 3B"},
+  {"id":"Qwen/Qwen3-30B-A3B","name":"Qwen3 30B-A3B (MoE)","family":"qwen","params":30532122624,"active_params":3338342400,"layers":48,"hidden":2048,"heads":32,"kv_heads":4,"head_dim":128,"vocab":151936,"ctx":32768,"experts":128,"experts_active":8,"notes":"reads 3.3B per token, but only while it fits in VRAM: offloaded experts are gathered per layer per token and decode collapses"},
   {"id":"Qwen/Qwen3-235B-A22B","name":"Qwen3 235B-A22B (MoE)","family":"qwen","params":235093634048,"active_params":22143995904,"layers":94,"hidden":4096,"heads":64,"kv_heads":4,"head_dim":128,"vocab":151936,"ctx":32768,"experts":128,"experts_active":8},
 
   {"id":"mistralai/Mistral-7B-Instruct-v0.3","name":"Mistral 7B Instruct v0.3","family":"mistral","params":7248023552,"layers":32,"hidden":4096,"heads":32,"kv_heads":8,"head_dim":128,"vocab":32768,"ctx":32768},

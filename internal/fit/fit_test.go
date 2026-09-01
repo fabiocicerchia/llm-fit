@@ -2,6 +2,7 @@ package fit
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/fabiocicerchia/llm-fit/internal/arch"
@@ -245,6 +246,44 @@ func TestMoEDecodesFasterThanItsSize(t *testing.T) {
 	}
 }
 
+// The other half of the MoE story, and the one that was wrong: the moment an
+// MoE spills onto the CPU, the active-parameter discount stops applying there.
+//
+// Pinned against a real run rather than arithmetic. Qwen3-30B-A3B at Q4_K_M on
+// a 12GB RTX 3060 with a Ryzen 3700X (43 GB/s measured memcpy), 16k context and
+// a q8_0 cache, 26 of 48 layers on the card: 2.4 tok/s, warm, after tuning the
+// split to fill the card and freeing 20GB of page cache. The model previously
+// predicted 19 tok/s for this plan and ranked it the single best option on the
+// machine — which is what this test exists to prevent.
+func TestMoEOnASmallCardIsNotUsable(t *testing.T) {
+	moe := arch.Model{Params: 30532122624, ActiveParams: 3338342400, Vocab: 151936,
+		Hidden: 2048, Layers: 48, Heads: 32, KVHeads: 4, HeadDim: 128, MaxCtx: 32768,
+		Experts: 128, ExpertsActive: 8}
+	f, _ := quant.ByName("Q4_K_M")
+
+	devs := []Device{
+		{Name: "RTX 3060", BytesFree: 11300 * MiB, BandwidthGBs: 360, TFLOPS: 26},
+		{Name: "system RAM", BytesFree: 16 * GiB, BandwidthGBs: 43, IsCPU: true},
+	}
+	est := EstimatePlan(Plan{Model: moe, Format: f, Ctx: 16384, KVType: "q8_0",
+		Batch: 1, Devices: devs}, llamaCpp())
+
+	if est.FullyOnGPU {
+		t.Fatal("this plan is meant to spill onto the CPU; it did not")
+	}
+	// Measured 2.4. A band, not a point: the constant behind this is one data
+	// point and the run that produced it still had swap draining.
+	if est.DecodeTPS < 1 || est.DecodeTPS > 6 {
+		t.Errorf("expected roughly the measured 2.4 tok/s, got %.1f", est.DecodeTPS)
+	}
+	// The consequence that actually matters: it must not clear the bar that
+	// `suggest` filters on, or it reappears at the top of the list.
+	if est.Verdict >= Usable {
+		t.Errorf("verdict %v at %.1f tok/s: this ranks as a recommendation again",
+			est.Verdict, est.DecodeTPS)
+	}
+}
+
 // Long context is where the KV cache stops being a rounding error. At 128k an
 // 8B model's cache exceeds its weights, and generation slows accordingly.
 func TestLongContextSlowsGenerationViaKVReads(t *testing.T) {
@@ -407,4 +446,34 @@ func equalFoldASCII(a, b string) bool {
 		}
 	}
 	return true
+}
+
+// Fitting in RAM and staying resident in RAM are different questions, and only
+// the first one was being asked. llama.cpp mmaps the weights, so CPU-side
+// layers are reclaimable page cache; when they need most of what is free, other
+// programs evict them and decode starts faulting off disk.
+func TestTightRAMWarnsAboutPageCacheEviction(t *testing.T) {
+	moe := arch.Model{Params: 30532122624, ActiveParams: 3338342400, Vocab: 151936,
+		Hidden: 2048, Layers: 48, Heads: 32, KVHeads: 4, HeadDim: 128, MaxCtx: 32768,
+		Experts: 128, ExpertsActive: 8}
+	f, _ := quant.ByName("Q4_K_M")
+	gpu := Device{Name: "RTX 3060", BytesFree: 11300 * MiB, BandwidthGBs: 360, TFLOPS: 26}
+
+	warns := func(ramGiB int64) bool {
+		est := EstimatePlan(Plan{Model: moe, Format: f, Ctx: 16384, KVType: "q8_0", Batch: 1,
+			Devices: []Device{gpu, {Name: "system RAM", BytesFree: ramGiB * GiB, BandwidthGBs: 43, IsCPU: true}}}, llamaCpp())
+		for _, r := range est.Reasons {
+			if strings.Contains(r, "stay cached") {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !warns(8) {
+		t.Error("8GiB free with ~7GiB of CPU-side weights should warn about eviction")
+	}
+	if warns(64) {
+		t.Error("64GiB free is not under cache pressure; the warning is noise there")
+	}
 }

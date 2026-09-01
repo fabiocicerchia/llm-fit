@@ -28,6 +28,20 @@ type Engine struct {
 	Serving              bool // built for concurrent requests rather than one chat
 	Summary              string
 	InstallHint          string
+	// InstallHintOS overrides InstallHint for a given runtime.GOOS. Most hints
+	// travel: pip and the ollama curl script are the same everywhere. Package
+	// managers do not, which is why llama.cpp is the only entry that needs this.
+	InstallHintOS map[string]string
+}
+
+// HintFor is the install line for one OS. Detection already knows which OS this
+// is (hw.Machine.OS); printing a hint that ignores it is how `brew install`
+// ended up being suggested on Linux.
+func (e Engine) HintFor(goos string) string {
+	if h, ok := e.InstallHintOS[goos]; ok {
+		return h
+	}
+	return e.InstallHint
 }
 
 var All = []Engine{
@@ -39,7 +53,12 @@ var All = []Engine{
 		},
 		Formats:     []quant.Family{quant.GGUF},
 		Summary:     "Runs anywhere, splits layers between GPU and CPU, best single-user speed per gigabyte.",
-		InstallHint: "brew install llama.cpp  # or: https://github.com/ggml-org/llama.cpp",
+		InstallHint: "https://github.com/ggml-org/llama.cpp  # build from source",
+		InstallHintOS: map[string]string{
+			"darwin":  "brew install llama.cpp",
+			"linux":   "https://github.com/ggml-org/llama.cpp  # no distro package; build with -DGGML_CUDA=ON for NVIDIA",
+			"windows": "winget install llama.cpp  # or a release binary from https://github.com/ggml-org/llama.cpp/releases",
+		},
 	},
 	{
 		Engine: fit.Engine{

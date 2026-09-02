@@ -1,13 +1,9 @@
 package gguf
 
 // fileTypes maps general.file_type — llama.cpp's ggml_ftype enum — onto the
-
 // names in the quant table. Only the values a published GGUF actually carries
-
 // are listed; anything else is reported as unknown rather than guessed at,
-
 // because a wrong bits-per-weight is worse than none.
-
 var fileTypes = map[uint32]string{
 	0:  "FP16", // all F32, but the table has no F32 row and 16 is the closer lie
 	1:  "FP16",

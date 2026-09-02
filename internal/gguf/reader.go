@@ -13,7 +13,6 @@ import (
 )
 
 // GGUF metadata value types, in the order the spec assigns them.
-
 const (
 	typeUint8 uint32 = iota
 	typeInt8
@@ -84,11 +83,8 @@ func (d *reader) str() (string, error) {
 }
 
 // skip discards n bytes through the buffered reader. Used for the tokenizer
-
 // arrays, which are the biggest thing in the header and of no interest here:
-
 // the vocabulary size comes from the embedding tensor's own shape.
-
 func (d *reader) skip(n int64) error {
 	if err := d.take(n); err != nil {
 		return err
@@ -98,9 +94,7 @@ func (d *reader) skip(n int64) error {
 }
 
 // scalarSize is the width of a fixed-size metadata value, or 0 for the
-
 // variable-length ones.
-
 func scalarSize(t uint32) int64 {
 	switch t {
 	case typeUint8, typeInt8, typeBool:
@@ -116,11 +110,8 @@ func scalarSize(t uint32) int64 {
 }
 
 // value reads one metadata value, returning it only when it is a scalar this
-
 // package might want. Strings come back as themselves; arrays are skipped and
-
 // reported as their element count, which is all any caller here needs.
-
 func (d *reader) value(t uint32) (any, error) {
 	if n := scalarSize(t); n > 0 {
 		return d.scalar(t, n)
@@ -135,11 +126,7 @@ func (d *reader) value(t uint32) (any, error) {
 }
 
 // scalar reads one fixed-width value of n bytes and widens it to the largest
-
-// scalar reads one fixed-width value of n bytes and widens it to the largest
-
 // type of its signedness, so a caller only has to know three shapes.
-
 func (d *reader) scalar(t uint32, n int64) (any, error) {
 	if err := d.take(n); err != nil {
 		return nil, err
@@ -174,15 +161,8 @@ func (d *reader) scalar(t uint32, n int64) (any, error) {
 }
 
 // array skips a metadata array and reports its element count. The tokenizer
-
 // vocabulary is the biggest thing in the header and its contents are of no
-
-// array skips a metadata array and reports its element count. The tokenizer
-
-// vocabulary is the biggest thing in the header and its contents are of no
-
 // interest, so nothing is retained.
-
 func (d *reader) array() (any, error) {
 	elem, err := d.u32()
 	if err != nil {

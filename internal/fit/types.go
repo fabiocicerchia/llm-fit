@@ -9,9 +9,7 @@ import (
 )
 
 // Device is one place weights can live. A machine is a list of these: usually
-
 // some GPUs and always the host.
-
 type Device struct {
 	Name string
 	// BytesFree is what is actually available, after the display server and
@@ -27,13 +25,7 @@ type Device struct {
 }
 
 // Plan is a proposed way to run one model: which quantization, how much
-
 // context, and how the layers are split across devices.
-
-// Plan is a proposed way to run one model: which quantization, how much
-
-// context, and how the layers are split across devices.
-
 type Plan struct {
 	Model   arch.Model
 	Format  quant.Format
@@ -45,9 +37,6 @@ type Plan struct {
 }
 
 // Estimate is what the tool reports for one plan.
-
-// Estimate is what the tool reports for one plan.
-
 type Estimate struct {
 	WeightBytes   int64
 	KVBytes       int64
@@ -102,17 +91,8 @@ func (v Verdict) String() string {
 }
 
 // Thresholds in tokens per second. A person reads prose at roughly 8 tok/s, so
-
 // anything below that feels like waiting rather than watching; 15 is
-
 // comfortable and 30 is faster than you can follow.
-
-// Thresholds in tokens per second. A person reads prose at roughly 8 tok/s, so
-
-// anything below that feels like waiting rather than watching; 15 is
-
-// comfortable and 30 is faster than you can follow.
-
 func verdictFor(decodeTPS float64) Verdict {
 	switch {
 	case decodeTPS >= 30:
@@ -128,11 +108,8 @@ func verdictFor(decodeTPS float64) Verdict {
 }
 
 // Engine is a runtime's constraints and its efficiency, both of which change
-
 // the answer materially. vLLM cannot usefully offload to CPU; llama.cpp can and
-
 // that is its whole point. Efficiency differences of 15% decide ties.
-
 type Engine struct {
 	Name string
 	// MBU: fraction of theoretical memory bandwidth actually achieved during

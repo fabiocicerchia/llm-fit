@@ -11,17 +11,11 @@ import (
 )
 
 // WeightBytes is the size of the model on disk and in memory.
-
 //
-
 // Split three ways because quantizers do: the body at the format's rate, and
-
 // the embedding and output projection at whatever higher precision the format
-
 // keeps them. Collapsing this to one average is accurate for a 70B and wrong by
-
 // several percent for anything small with a large vocabulary.
-
 func WeightBytes(m arch.Model, f quant.Format) int64 {
 	embedOne := int64(m.Vocab) * int64(m.Hidden)
 	var embed, output float64
@@ -36,15 +30,10 @@ func WeightBytes(m arch.Model, f quant.Format) int64 {
 }
 
 // kvElementBytes is the per-element cost of the named cache precision.
-
 //
-
 // One place, because the fallback used to be written out at each of the three
-
 // call sites: an unknown -kv silently sized every cache as f16, and a plan for
-
 // a quantized cache came back with an f16 context ceiling.
-
 func kvElementBytes(kvType string) float64 {
 	if elem, ok := quant.KVCacheBytesPerElement[kvType]; ok {
 		return elem
@@ -53,7 +42,6 @@ func kvElementBytes(kvType string) float64 {
 }
 
 // KVBytes is the cache for the whole context window at the given precision.
-
 func KVBytes(m arch.Model, ctx, batch int, kvType string) int64 {
 	elem := kvElementBytes(kvType)
 	if batch < 1 {
@@ -63,17 +51,11 @@ func KVBytes(m arch.Model, ctx, batch int, kvType string) int64 {
 }
 
 // Overhead is everything that is neither weights nor cache: the CUDA context,
-
 // the runtime's own allocations, the activation working set, and the logits.
-
 //
-
 // The logits term is the one that surprises people. A 256k-vocabulary model
-
 // materialises a float per vocabulary entry per token in the batch, so Gemma at
-
 // batch 512 spends half a gigabyte on logits alone.
-
 func Overhead(m arch.Model, e Engine, ctx, batch int, onGPU bool) int64 {
 	var total float64
 
@@ -104,9 +86,7 @@ func Overhead(m arch.Model, e Engine, ctx, batch int, onGPU bool) int64 {
 }
 
 // MaxContext is the largest context the remaining memory can hold once the
-
 // weights are placed. Usually the number people actually want.
-
 func maxContext(m arch.Model, p Plan, e Engine, capacity int64) int {
 	perToken := m.KVBytesPerToken(kvElementBytes(p.KVType)) * float64(max(p.Batch, 1))
 	if perToken <= 0 {
@@ -120,15 +100,8 @@ func maxContext(m arch.Model, p Plan, e Engine, capacity int64) int {
 }
 
 // Concurrency answers the question a serving engine is deployed to answer: how
-
 // many simultaneous requests at this context fit in what is left after the
-
-// Concurrency answers the question a serving engine is deployed to answer: how
-
-// many simultaneous requests at this context fit in what is left after the
-
 // weights.
-
 func concurrency(m arch.Model, p Plan, e Engine, gpuBytes, weights, overhead int64) int {
 	if !e.CanOffloadCPU && gpuBytes == 0 {
 		return 0

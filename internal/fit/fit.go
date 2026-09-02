@@ -291,7 +291,8 @@ func EstimatePlan(p Plan, e Engine) Estimate {
 	perLayerKV := float64(est.KVBytes) / math.Max(float64(m.Layers), 1)
 	perLayer := perLayerWeight + perLayerKV
 
-	est.OverheadBytes = Overhead(m, e, p.Ctx, p.Batch, gpuTotal > 0)
+	hasGPU := gpuTotal > 0
+	est.OverheadBytes = Overhead(m, e, p.Ctx, p.Batch, hasGPU)
 	est.TotalBytes = est.WeightBytes + est.KVBytes + est.OverheadBytes
 
 	usableGPU := float64(gpuTotal) - float64(est.OverheadBytes)
@@ -316,7 +317,7 @@ func EstimatePlan(p Plan, e Engine) Estimate {
 	cpuLayers := m.Layers - layersFit
 	est.GPUBytes = int64(float64(layersFit)*perLayer) + est.OverheadBytes
 	est.CPUBytes = int64(float64(cpuLayers) * perLayer)
-	est.FullyOnGPU = cpuLayers == 0 && gpuTotal > 0
+	est.FullyOnGPU = cpuLayers == 0 && hasGPU
 
 	if est.CPUBytes > cpuTotal {
 		est.Fits = false
@@ -383,7 +384,7 @@ const cpuCachePressure = 0.7
 func explain(est Estimate, p Plan, e Engine, cpuLayers int, cpuTotal int64) []string {
 	var out []string
 	if cpuLayers > 0 {
-		out = append(out, plural(cpuLayers)+" running on the CPU: every token waits on system RAM, which is why this is slow")
+		out = append(out, layerClause(cpuLayers)+" running on the CPU: every token waits on system RAM, which is why this is slow")
 	}
 	// Fitting is not the same as staying resident. llama.cpp mmaps the weight
 	// file, so CPU-side layers live in reclaimable page cache — the same pages
@@ -408,7 +409,7 @@ func explain(est Estimate, p Plan, e Engine, cpuLayers int, cpuTotal int64) []st
 	return out
 }
 
-func plural(n int) string {
+func layerClause(n int) string {
 	if n == 1 {
 		return "1 layer is"
 	}

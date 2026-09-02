@@ -137,7 +137,7 @@ func main() {
 
 func cmdDetect(m hw.Machine, asJSON bool) {
 	if asJSON {
-		emit(m)
+		emitJSON(m)
 		return
 	}
 	fmt.Printf("%s/%s, %d cores\n", m.OS, m.Arch, m.CPUCores)
@@ -184,7 +184,7 @@ func cmdDetect(m hw.Machine, asJSON bool) {
 func cmdSuggest(m hw.Machine, req advisor.Request, top int, asJSON bool) {
 	opts := advisor.Suggest(m, req)
 	if asJSON {
-		emit(opts)
+		emitJSON(opts)
 		return
 	}
 	if len(opts) == 0 {
@@ -288,7 +288,7 @@ func cmdCheck(m hw.Machine, req advisor.Request, query string, asJSON, useHF boo
 		opts = only
 	}
 	if asJSON {
-		emit(opts)
+		emitJSON(opts)
 		return
 	}
 
@@ -354,7 +354,7 @@ func cmdEngines(m hw.Machine) {
 func cmdModels(asJSON bool) {
 	all := catalog.All()
 	if asJSON {
-		emit(all)
+		emitJSON(all)
 		return
 	}
 	for _, m := range all {
@@ -487,7 +487,7 @@ func truncate(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
-func emit(v any) {
+func emitJSON(v any) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(v)

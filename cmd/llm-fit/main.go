@@ -46,6 +46,20 @@ Flags
   -ram GiB            override detected system RAM
   -ram-bandwidth GBs  override system RAM bandwidth
 
+  -parallel tensor|layer  how to spread across several GPUs. Default is what
+                      the chosen runtime actually does: llama.cpp splits
+                      layers (extra cards buy capacity), vLLM/SGLang/
+                      ExLlamaV2/TensorRT-LLM shard tensors (extra cards buy
+                      speed). Ignored with one GPU.
+  -interconnect GBs   GPU link bandwidth for tensor parallelism (default 32,
+                      one direction of PCIe 4.0 x16; NVLink is ~300+)
+
+  -draft MODEL        pair a speculative draft model with the target
+  -lookahead N        tokens the draft proposes per verification step (4)
+  -acceptance R       assumed acceptance rate 0-1 (0.7); reported in the
+                      output, because the speedup depends on it more than on
+                      anything else
+
 Speed figures are estimates from memory bandwidth and compute, not measurements.
 They are usually within about 20% on hardware in the built-in table; treat them
 as "this is the right ballpark" rather than a benchmark.
@@ -72,6 +86,11 @@ func main() {
 	vramOverride := fs.Float64("vram", 0, "")
 	ramOverride := fs.Float64("ram", 0, "")
 	ramBW := fs.Float64("ram-bandwidth", 0, "")
+	parallel := fs.String("parallel", "", "")
+	link := fs.Float64("interconnect", 0, "")
+	draftName := fs.String("draft", "", "")
+	lookahead := fs.Int("lookahead", 0, "")
+	acceptance := fs.Float64("acceptance", 0, "")
 	fs.Usage = func() { fmt.Print(usage) }
 
 	cmd := os.Args[1]
@@ -107,11 +126,33 @@ func main() {
 
 	req := advisor.Request{
 		Ctx: *ctx, KVType: *kv, Batch: *batch, Serving: *serving,
-		MinVerdict: parseVerdict(*minLevel),
-		MinQuality: *minQuality,
+		MinVerdict:      parseVerdict(*minLevel),
+		MinQuality:      *minQuality,
+		InterconnectGBs: *link,
 	}
 	if *engineName != "" {
 		req.Engines = []string{*engineName}
+	}
+	switch *parallel {
+	case "":
+		// Left unset on purpose: each engine's own default is the honest answer.
+	case "tp", "tensor", "tensor-parallel":
+		req.Parallelism, req.ParallelismSet = fit.TensorParallel, true
+	case "layer", "layer-split", "ls":
+		req.Parallelism, req.ParallelismSet = fit.LayerSplit, true
+	default:
+		fmt.Fprintf(os.Stderr, "unknown -parallel %q: use tensor or layer\n", *parallel)
+		os.Exit(2)
+	}
+	if *draftName != "" {
+		d, ok := catalog.Find(*draftName)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown draft model %q — see `llm-fit list`\n", *draftName)
+			os.Exit(2)
+		}
+		req.Draft = &fit.Speculative{
+			Draft: d, Lookahead: *lookahead, AcceptanceRate: *acceptance,
+		}
 	}
 
 	switch cmd {

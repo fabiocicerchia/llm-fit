@@ -20,6 +20,7 @@
 package fit
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 
@@ -48,6 +49,64 @@ type Device struct {
 	IsCPU  bool
 }
 
+// Parallelism is how a model is spread across more than one GPU. The two
+// strategies have different arithmetic, and modelling only the first made vLLM
+// look worse than it is.
+type Parallelism int
+
+const (
+	// LayerSplit puts whole layers on each card. One card works at a time, so
+	// the cards' bandwidths combine harmonically — for identical cards that is
+	// one card's bandwidth, which is why a second 3090 buys capacity, not speed.
+	// This is what llama.cpp does.
+	LayerSplit Parallelism = iota
+	// TensorParallel shards every layer's weight matrices across the cards, so
+	// all of them read and compute at once and the bandwidths *sum*. The cost is
+	// an all-reduce of the activations at each layer, which the interconnect has
+	// to carry. This is what vLLM, TensorRT-LLM and ExLlamaV2 do.
+	TensorParallel
+)
+
+func (p Parallelism) String() string {
+	if p == TensorParallel {
+		return "tensor-parallel"
+	}
+	return "layer-split"
+}
+
+// DefaultInterconnectGBs is one direction of PCIe 4.0 x16, the interconnect most
+// multi-GPU desktops actually have. NVLink is an order of magnitude faster
+// (~300 GB/s on a bridged 3090 pair, ~900 on an H100), so a plan that has it
+// should say so rather than inherit this floor.
+const DefaultInterconnectGBs = 32.0
+
+// Speculative is a draft model paired with the target it speeds up.
+//
+// The draft proposes Lookahead tokens, the target verifies all of them in one
+// forward pass, and every token up to the first rejection is kept. It is a
+// throughput trade, not a free one: the draft's weights occupy VRAM the target
+// could have used, and a draft that is rarely accepted costs more than it saves.
+type Speculative struct {
+	Draft  arch.Model
+	Format quant.Format
+	// Lookahead is how many tokens the draft proposes per verification step.
+	Lookahead int
+	// AcceptanceRate is the probability the target accepts a proposed token.
+	// Zero means DefaultAcceptanceRate.
+	AcceptanceRate float64
+}
+
+// DefaultAcceptanceRate is the middle of the range Leviathan et al. (2023),
+// "Fast Inference from Transformers via Speculative Decoding", measure for a
+// draft drawn from the same family as its target — roughly 0.6-0.8 depending on
+// the pair and the sampling temperature. It is reported in the output rather
+// than buried, because the speedup is far more sensitive to it than to anything
+// else here.
+const DefaultAcceptanceRate = 0.7
+
+// DefaultLookahead is the draft depth vLLM and llama.cpp both default to.
+const DefaultLookahead = 4
+
 // Plan is a proposed way to run one model: which quantization, how much
 // context, and how the layers are split across devices.
 type Plan struct {
@@ -58,6 +117,18 @@ type Plan struct {
 	Batch   int
 	Engine  string
 	Devices []Device
+
+	// Parallelism across the GPUs. The zero value is LayerSplit; EstimatePlan
+	// substitutes the engine's own default when ParallelismSet is false, so a
+	// caller that says nothing gets the strategy the runtime would actually use.
+	Parallelism    Parallelism
+	ParallelismSet bool
+	// InterconnectGBs is the per-GPU link bandwidth tensor parallelism has to
+	// push activations over. Zero means DefaultInterconnectGBs.
+	InterconnectGBs float64
+
+	// Speculative, when set, pairs a draft model with this target.
+	Speculative *Speculative
 }
 
 // Estimate is what the tool reports for one plan.
@@ -85,6 +156,20 @@ type Estimate struct {
 	// Concurrency is how many simultaneous requests of this context length the
 	// leftover memory can hold. Only meaningful for serving engines.
 	Concurrency int
+
+	// Parallelism actually used, and what the other strategy would have given.
+	// The delta is the point: it is the difference between "a second card buys
+	// capacity" and "a second card buys speed", and which one is true depends
+	// entirely on the runtime.
+	Parallelism     Parallelism
+	AltDecodeTPS    float64
+	InterconnectTPS float64 // decode ceiling the interconnect alone imposes
+	// DraftBytes is the extra VRAM a speculative pair costs, and Speedup /
+	// AcceptanceRate are what it buys. Zero when no draft is configured.
+	DraftBytes      int64
+	Speedup         float64
+	AcceptanceRate  float64
+	AcceptedPerStep float64
 
 	Verdict Verdict
 	Reasons []string
@@ -212,6 +297,11 @@ type Engine struct {
 	// MemoryFraction is how much of the card the engine will use. vLLM
 	// preallocates 90% by default and hands the rest back to nobody.
 	MemoryFraction float64
+	// DefaultParallelism is the strategy this runtime uses across several GPUs
+	// when the caller does not say. llama.cpp splits layers; vLLM and
+	// ExLlamaV2 shard tensors, and modelling them as layer-split made them look
+	// slower than they are.
+	DefaultParallelism Parallelism
 }
 
 // CPU decode efficiency, as a fraction of measured memcpy bandwidth.
@@ -248,6 +338,88 @@ const (
 
 // cpuEfficiency picks between them. Only reached when layers actually land on
 // the CPU, so an MoE that fits entirely in VRAM is unaffected.
+// altDecodeTPS is the decode rate the *other* parallelism strategy would give,
+// with everything else held equal. Reported so the choice is visible: under a
+// layer split a second identical card changes nothing about speed, and under
+// tensor parallelism it roughly doubles it, and no single number says that.
+func altDecodeTPS(p Plan, e Engine, m arch.Model, used Parallelism, link, bytesPerToken, gpuShare, cpuShare float64) float64 {
+	alt := TensorParallel
+	if used == TensorParallel {
+		alt = LayerSplit
+	}
+	gpuBW, cpuBW := bandwidths(p.Devices, alt)
+	var spt float64
+	if gpuShare > 0 && gpuBW > 0 {
+		spt += bytesPerToken * gpuShare / (e.MBU * gpuBW * 1e9)
+	}
+	if cpuShare > 0 && cpuBW > 0 {
+		spt += bytesPerToken * cpuShare / (cpuEfficiency(m) * cpuBW * 1e9)
+	}
+	if alt == TensorParallel {
+		spt += allReduceSecondsPerToken(m, p.Batch, gpuCount(p.Devices), link)
+	}
+	if spt <= 0 {
+		return 0
+	}
+	return 1 / spt
+}
+
+// draftFormat is the quantization the draft is stored at. A caller that names
+// no format for the draft means "the same as the target" — the common case, and
+// the one that silently dropped the draft's weights from the VRAM total when
+// only speculativeSpeedup applied the fallback.
+func draftFormat(s Speculative, target quant.Format) quant.Format {
+	if s.Format.Name == "" {
+		return target
+	}
+	return s.Format
+}
+
+// speculativeSpeedup returns the acceptance rate used, the expected tokens per
+// verification step, and the resulting multiplier on decode throughput.
+//
+// One step is K draft forward passes plus one target pass that verifies all K
+// proposals at once. Every token up to the first rejection is kept, so with
+// acceptance probability a the expected yield is the geometric sum
+//
+//	E[accepted] = (1 - a^(K+1)) / (1 - a)
+//
+// capped at K+1 — the target's own token is free when every proposal is
+// accepted. The step costs one target pass plus K draft passes, and both are
+// bandwidth-bound, so their relative cost is just the ratio of weights read.
+//
+// The multiplier is therefore E[accepted] / (1 + K*r) with r that ratio. It
+// goes *below* 1 when the draft is large or rarely accepted, which is the
+// answer that matters: speculative decoding is a trade, and a badly matched
+// pair is slower than not using it.
+func speculativeSpeedup(target arch.Model, s Speculative, f quant.Format, baseTPS float64) (rate, accepted, speedup float64) {
+	rate = s.AcceptanceRate
+	if rate <= 0 {
+		rate = DefaultAcceptanceRate
+	}
+	rate = math.Min(rate, 0.999) // a == 1 would divide by zero below
+	k := s.Lookahead
+	if k <= 0 {
+		k = DefaultLookahead
+	}
+
+	accepted = (1 - math.Pow(rate, float64(k)+1)) / (1 - rate)
+	accepted = math.Min(accepted, float64(k)+1)
+
+	df := draftFormat(s, f)
+	targetRead := float64(WeightBytes(target, f)) *
+		float64(target.Active()) / math.Max(float64(target.Params), 1)
+	draftRead := float64(WeightBytes(s.Draft, df)) *
+		float64(s.Draft.Active()) / math.Max(float64(s.Draft.Params), 1)
+	var ratio float64
+	if targetRead > 0 {
+		ratio = draftRead / targetRead
+	}
+
+	speedup = accepted / (1 + float64(k)*ratio)
+	return rate, accepted, speedup
+}
+
 func cpuEfficiency(m arch.Model) float64 {
 	if m.IsMoE() {
 		return cpuGatherEfficiency
@@ -260,8 +432,35 @@ func EstimatePlan(p Plan, e Engine) Estimate {
 	var est Estimate
 	m := p.Model
 
+	// A caller that says nothing gets the strategy the runtime would really
+	// use, rather than whichever one happens to be the zero value.
+	par := p.Parallelism
+	if !p.ParallelismSet {
+		par = e.DefaultParallelism
+	}
+	if gpuCount(p.Devices) < 2 {
+		// With one card the distinction does not exist, and reporting a
+		// strategy would suggest a choice that was never made.
+		par = LayerSplit
+	}
+	est.Parallelism = par
+
 	est.WeightBytes = WeightBytes(m, p.Format)
 	est.KVBytes = KVBytes(m, p.Ctx, p.Batch, p.KVType)
+
+	// A draft model is resident for the whole run: its weights and its own KV
+	// cache come out of the same VRAM the target wanted. Counting the speedup
+	// without counting the memory is how speculative decoding gets recommended
+	// onto a card it no longer fits on.
+	if p.Speculative != nil {
+		d := *p.Speculative
+		df := draftFormat(d, p.Format)
+		dw := WeightBytes(d.Draft, df)
+		dkv := KVBytes(d.Draft, p.Ctx, p.Batch, p.KVType)
+		est.DraftBytes = dw + dkv
+		est.WeightBytes += dw
+		est.KVBytes += dkv
+	}
 
 	gpuTotal, cpuTotal := splitCapacity(p.Devices, e.MemoryFraction)
 
@@ -319,7 +518,7 @@ func EstimatePlan(p Plan, e Engine) Estimate {
 	gpuShare := float64(layersFit) / math.Max(float64(m.Layers), 1)
 	cpuShare := 1 - gpuShare
 
-	gpuBW, cpuBW := bandwidths(p.Devices)
+	gpuBW, cpuBW := bandwidths(p.Devices, par)
 	var secondsPerToken float64
 	if gpuShare > 0 && gpuBW > 0 {
 		secondsPerToken += (weightsRead + kvRead) * gpuShare / (e.MBU * gpuBW * 1e9)
@@ -327,15 +526,46 @@ func EstimatePlan(p Plan, e Engine) Estimate {
 	if cpuShare > 0 && cpuBW > 0 {
 		secondsPerToken += (weightsRead + kvRead) * cpuShare / (cpuEfficiency(m) * cpuBW * 1e9)
 	}
+	// Tensor parallelism pays an all-reduce per layer per token. Added to the
+	// bandwidth term rather than modelled as a separate ceiling, because the
+	// two are serial: the card cannot start the next layer until the reduce for
+	// this one has landed.
+	link := p.InterconnectGBs
+	if link <= 0 {
+		link = DefaultInterconnectGBs
+	}
+	if par == TensorParallel {
+		reduce := allReduceSecondsPerToken(m, p.Batch, gpuCount(p.Devices), link)
+		secondsPerToken += reduce
+		if reduce > 0 {
+			est.InterconnectTPS = 1 / reduce
+		}
+	}
 	if secondsPerToken > 0 {
 		est.DecodeTPS = 1 / secondsPerToken
+	}
+
+	// What the other strategy would have given, so the delta is visible rather
+	// than implied. This is the number that says whether a second card is worth
+	// buying for *this* runtime.
+	if gpuCount(p.Devices) > 1 {
+		est.AltDecodeTPS = altDecodeTPS(p, e, m, par, link, weightsRead+kvRead, gpuShare, cpuShare)
+	}
+
+	// Speculative decoding multiplies the decode rate, so it is applied to the
+	// bandwidth-bound figure above rather than replacing it.
+	if p.Speculative != nil {
+		est.AcceptanceRate, est.AcceptedPerStep, est.Speedup = speculativeSpeedup(
+			m, *p.Speculative, p.Format, est.DecodeTPS)
+		est.DecodeTPS *= est.Speedup
+		est.AltDecodeTPS *= est.Speedup
 	}
 
 	// --- prefill: compute bound ---------------------------------------------
 	flopsPerToken := 2 * float64(m.Active())
 	// Attention adds a term that grows with how much context is already there.
 	flopsPerToken += 4 * float64(m.Layers) * float64(m.Hidden) * float64(p.Ctx) / 2
-	tflops := effectiveTFLOPS(p.Devices, gpuShare, cpuShare)
+	tflops := effectiveTFLOPS(p.Devices, gpuShare, cpuShare, par)
 	if flopsPerToken > 0 && tflops > 0 {
 		est.PrefillTPS = e.MFU * tflops * 1e12 / flopsPerToken
 	}
@@ -385,7 +615,56 @@ func explain(est Estimate, p Plan, e Engine, cpuLayers int, cpuTotal int64) []st
 	if est.FullyOnGPU && est.Verdict >= Good {
 		out = append(out, "entirely in VRAM")
 	}
+	if n := gpuCount(p.Devices); n > 1 && est.AltDecodeTPS > 0 {
+		alt := LayerSplit
+		if est.Parallelism == LayerSplit {
+			alt = TensorParallel
+		}
+		out = append(out, fmt.Sprintf(
+			"%d GPUs, %s (%s default): ~%.0f tok/s here, ~%.0f under %s",
+			n, est.Parallelism, e.Name, est.DecodeTPS, est.AltDecodeTPS, alt))
+		// The thing people actually want to know before buying a second card.
+		if est.Parallelism == LayerSplit && est.AltDecodeTPS > est.DecodeTPS*1.2 {
+			out = append(out, "a layer split makes extra cards buy capacity, not speed — a tensor-parallel runtime would be faster on this hardware")
+		}
+		if est.Parallelism == TensorParallel && est.InterconnectTPS > 0 &&
+			est.InterconnectTPS < est.DecodeTPS*4 {
+			out = append(out, fmt.Sprintf(
+				"the interconnect is close to being the limit here (~%.0f tok/s of all-reduce alone at %.0f GB/s) — NVLink would move it",
+				est.InterconnectTPS, interconnect(p)))
+		}
+	}
+	if p.Speculative != nil {
+		verb := "gains"
+		if est.Speedup < 1 {
+			verb = "LOSES"
+		}
+		out = append(out, fmt.Sprintf(
+			"speculative decoding %s %.2fx at an assumed %.0f%% acceptance rate (%.1f tokens per verify step); the draft also costs %s of VRAM",
+			verb, est.Speedup, est.AcceptanceRate*100, est.AcceptedPerStep, humanBytes(est.DraftBytes)))
+		if est.Speedup < 1 {
+			out = append(out, "the draft is too expensive or too rarely accepted to pay for itself — try a smaller draft, or drop it")
+		}
+	}
 	return out
+}
+
+func interconnect(p Plan) float64 {
+	if p.InterconnectGBs > 0 {
+		return p.InterconnectGBs
+	}
+	return DefaultInterconnectGBs
+}
+
+func humanBytes(b int64) string {
+	switch {
+	case b >= int64(GiB):
+		return fmt.Sprintf("%.1f GiB", float64(b)/GiB)
+	case b >= int64(MiB):
+		return fmt.Sprintf("%.0f MiB", float64(b)/MiB)
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
 }
 
 func plural(n int) string {
@@ -456,8 +735,8 @@ func splitCapacity(devs []Device, fraction float64) (gpu, cpu int64) {
 // bandwidth, so total time is the sum and the effective rate is the harmonic
 // combination. For the common case of identical cards this is just one card's
 // bandwidth, which is why adding a second 3090 buys capacity, not speed.
-func bandwidths(devs []Device) (gpu, cpu float64) {
-	var invSum float64
+func bandwidths(devs []Device, par Parallelism) (gpu, cpu float64) {
+	var invSum, sum float64
 	var n int
 	for _, d := range devs {
 		if d.IsCPU {
@@ -466,10 +745,19 @@ func bandwidths(devs []Device) (gpu, cpu float64) {
 		}
 		if d.BandwidthGBs > 0 {
 			invSum += 1 / d.BandwidthGBs
+			sum += d.BandwidthGBs
 			n++
 		}
 	}
-	if n > 0 {
+	switch {
+	case n == 0:
+	case par == TensorParallel:
+		// Every card holds a shard of every layer and reads it at the same
+		// time, so the bandwidths add. This is the whole reason the two
+		// strategies are worth modelling apart: two identical cards are twice
+		// the decode rate here and exactly the same rate under a layer split.
+		gpu = sum
+	default:
 		// Harmonic mean: n cards each holding 1/n of the layers take
 		// sum(1/bw_i) * bytes/n seconds, so the effective rate is n/sum(1/bw).
 		gpu = float64(n) / invSum
@@ -477,7 +765,39 @@ func bandwidths(devs []Device) (gpu, cpu float64) {
 	return gpu, cpu
 }
 
-func effectiveTFLOPS(devs []Device, gpuShare, cpuShare float64) float64 {
+// gpuCount is how many non-CPU devices a plan has.
+func gpuCount(devs []Device) int {
+	n := 0
+	for _, d := range devs {
+		if !d.IsCPU {
+			n++
+		}
+	}
+	return n
+}
+
+// allReduceSecondsPerToken is what tensor parallelism pays the interconnect.
+//
+// A ring all-reduce moves 2*(N-1)/N * S bytes per card, and there is one per
+// layer per token, with S the activation vector: hidden * 2 bytes at fp16,
+// times the batch. On two desktop cards over PCIe this is microseconds against
+// a decode step of tens of milliseconds — which is the honest answer, and the
+// reason tensor parallelism is worth it there. It stops being negligible as the
+// card count and the batch grow, which is exactly when people notice.
+func allReduceSecondsPerToken(m arch.Model, batch, gpus int, linkGBs float64) float64 {
+	if gpus < 2 || linkGBs <= 0 {
+		return 0
+	}
+	if batch < 1 {
+		batch = 1
+	}
+	activation := float64(m.Hidden) * 2 * float64(batch)
+	n := float64(gpus)
+	bytesPerToken := float64(m.Layers) * 2 * (n - 1) / n * activation
+	return bytesPerToken / (linkGBs * 1e9)
+}
+
+func effectiveTFLOPS(devs []Device, gpuShare, cpuShare float64, par Parallelism) float64 {
 	var gpuT float64
 	var n int
 	for _, d := range devs {
@@ -486,9 +806,10 @@ func effectiveTFLOPS(devs []Device, gpuShare, cpuShare float64) float64 {
 			n++
 		}
 	}
-	if n > 0 {
+	if n > 0 && par != TensorParallel {
 		// Layer-split runs one card at a time, so extra cards add capacity
-		// rather than prefill throughput.
+		// rather than prefill throughput. Under tensor parallelism every card
+		// works on the same layer at once, so the FLOPs add and gpuT stands.
 		gpuT /= float64(n)
 	}
 	// CPU prefill is roughly two orders of magnitude slower; treat the CPU

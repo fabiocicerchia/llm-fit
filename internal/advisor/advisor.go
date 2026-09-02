@@ -40,6 +40,17 @@ type Request struct {
 	Serving bool
 	Engines []string // restrict to these; empty means all the machine can run
 	Models  []arch.Model
+
+	// Parallelism overrides each engine's own multi-GPU default. Only read
+	// when ParallelismSet is true, so "not specified" stays distinguishable
+	// from "layer split", which is the zero value.
+	Parallelism    fit.Parallelism
+	ParallelismSet bool
+	// InterconnectGBs is the GPU link tensor parallelism pushes activations
+	// over. Zero means fit's PCIe 4.0 default.
+	InterconnectGBs float64
+	// Draft pairs a speculative draft model with every target considered.
+	Draft *fit.Speculative
 }
 
 type Option struct {
@@ -238,6 +249,8 @@ func bestFor(model arch.Model, m hw.Machine, devs []fit.Device, req Request) (Op
 			est := fit.EstimatePlan(fit.Plan{
 				Model: model, Format: f, Ctx: ctx, KVType: req.KVType,
 				Batch: req.Batch, Engine: eng.Name, Devices: devs,
+				Parallelism: req.Parallelism, ParallelismSet: req.ParallelismSet,
+				InterconnectGBs: req.InterconnectGBs, Speculative: req.Draft,
 			}, eng.Engine)
 
 			if !est.Fits || est.Verdict < req.MinVerdict {
@@ -281,6 +294,8 @@ func Inspect(model arch.Model, m hw.Machine, req Request) []Option {
 			est := fit.EstimatePlan(fit.Plan{
 				Model: model, Format: f, Ctx: ctx, KVType: req.KVType,
 				Batch: req.Batch, Engine: eng.Name, Devices: devs,
+				Parallelism: req.Parallelism, ParallelismSet: req.ParallelismSet,
+				InterconnectGBs: req.InterconnectGBs, Speculative: req.Draft,
 			}, eng.Engine)
 			out = append(out, Option{Model: model, Engine: eng, Format: f, Estimate: est, Ctx: ctx, KVType: req.KVType})
 		}

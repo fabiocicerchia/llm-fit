@@ -79,7 +79,8 @@ decides whether a model is suggested at all.
 weight and the entire KV cache, once. So tokens per second is bandwidth divided
 by bytes-read-per-token — not FLOPs. It is why a 4090 and an A100 are far
 closer in single-stream chat than their compute suggests, and why a second GPU
-buys capacity rather than speed.
+buys capacity rather than speed *under a layer split* — see below, because that
+last clause is doing more work than it looks.
 
 **Prefill is compute bound.** Ingesting a prompt is a matrix-matrix product over
 many tokens at once, so it scales with FLOPs. A card can be slow to chat and
@@ -99,6 +100,55 @@ The memory model is checked against published GGUF file sizes rather than
 against itself — see `internal/fit/fit_test.go`, which asserts predictions land
 within 3% of real releases for Llama-2, Llama-3 and Mistral across seven
 quantizations.
+
+### Multi-GPU: the two strategies are different arithmetic
+
+"A second GPU buys capacity rather than speed" is true of a **layer split** and
+false of **tensor parallelism**, and modelling only the first made vLLM look
+worse than it is.
+
+| | Layer split | Tensor parallel |
+|---|---|---|
+| Who | llama.cpp, Ollama | vLLM, SGLang, ExLlamaV2, TensorRT-LLM |
+| Where the weights go | whole layers per card | every matrix sharded across all cards |
+| Effective bandwidth | **harmonic** mean — one card at a time, so for identical cards it is one card's | **sum** — all cards read their shard at once |
+| Prefill FLOPs | one card's | all cards' |
+| Interconnect | nothing crosses it per token | an all-reduce per layer per token |
+
+Two identical 3090s therefore decode at ~936 GB/s under llama.cpp and ~1872
+GB/s under vLLM, and that is the difference the estimate now shows. `-parallel`
+overrides it; the default is what the chosen runtime actually does.
+
+The all-reduce is modelled as a ring: `2(N-1)/N × hidden × 2 bytes × batch` per
+layer per token, over `-interconnect` (default 32 GB/s, one direction of PCIe
+4.0 x16). On two desktop cards at batch 1 that is tens of microseconds against
+a decode step of tens of milliseconds — **nearly free, and the model says so
+rather than inflating it**. It stops being free as the card count and the batch
+grow, which is when people notice, so the estimate warns when the interconnect
+comes within 4× of being the limit.
+
+### Speculative decoding is a trade, not a speedup
+
+A draft model proposes `K` tokens, the target verifies all `K` in one forward
+pass, and everything up to the first rejection is kept. With acceptance
+probability `a` the expected yield per step is the geometric sum
+`(1 − a^(K+1)) / (1 − a)`, capped at `K+1` — the target's own token is free when
+every proposal is accepted.
+
+Both passes are bandwidth-bound, so their relative cost is just the ratio of
+weights read, and the multiplier is `E[accepted] / (1 + K·r)`. **It goes below
+1** when the draft is large or rarely accepted, and reporting that is the point:
+a badly matched pair is slower than not using it at all.
+
+The draft is resident for the whole run, so its weights *and its own KV cache*
+are added to the memory total. Counting the speedup without counting the memory
+is how speculative decoding gets recommended onto a card it no longer fits on.
+
+The default acceptance rate is **0.7**, the middle of the 0.6–0.8 range
+Leviathan et al. (2023), *Fast Inference from Transformers via Speculative
+Decoding*, measure for a draft from the same family as its target. It is printed
+in the output rather than buried, because the answer is more sensitive to it
+than to anything else in the estimate — override with `-acceptance`.
 
 ## Runtimes
 
@@ -122,8 +172,9 @@ choosing, not a benchmark. Three things push them off:
 
 - A GPU not in the spec table has no known bandwidth. It is flagged, and the
   speed figures that follow are guesses.
-- Speculative decoding, prefix caching and batch-of-one assumptions all move
-  real throughput.
+- Prefix caching and batch-of-one assumptions move real throughput. Speculative
+  decoding is now modelled (`-draft`), but on an assumed acceptance rate rather
+  than a measured one, and the acceptance rate is the whole answer.
 - **An MoE with experts on the CPU is the one case measured against a stopwatch,
   and it needed its own constant.** Scaling bytes by the active fraction is
   right on the GPU and wrong on the CPU, where each layer re-gathers its experts

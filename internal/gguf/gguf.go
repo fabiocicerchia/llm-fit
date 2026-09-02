@@ -209,74 +209,88 @@ func scalarSize(t uint32) int64 {
 // reported as their element count, which is all any caller here needs.
 func (d *reader) value(t uint32) (any, error) {
 	if n := scalarSize(t); n > 0 {
-		if err := d.take(n); err != nil {
-			return nil, err
-		}
-		b := make([]byte, n)
-		if _, err := io.ReadFull(d.r, b); err != nil {
-			return nil, err
-		}
-		switch t {
-		case typeUint8, typeBool:
-			return uint64(b[0]), nil
-		case typeInt8:
-			return int64(int8(b[0])), nil
-		case typeUint16:
-			return uint64(binary.LittleEndian.Uint16(b)), nil
-		case typeInt16:
-			return int64(int16(binary.LittleEndian.Uint16(b))), nil
-		case typeUint32:
-			return uint64(binary.LittleEndian.Uint32(b)), nil
-		case typeInt32:
-			return int64(int32(binary.LittleEndian.Uint32(b))), nil
-		case typeFloat32:
-			return float64(math.Float32frombits(binary.LittleEndian.Uint32(b))), nil
-		case typeUint64:
-			return binary.LittleEndian.Uint64(b), nil
-		case typeInt64:
-			return int64(binary.LittleEndian.Uint64(b)), nil
-		case typeFloat64:
-			return math.Float64frombits(binary.LittleEndian.Uint64(b)), nil
-		}
+		return d.scalar(t, n)
 	}
 	switch t {
 	case typeString:
 		return d.str()
 	case typeArray:
-		elem, err := d.u32()
-		if err != nil {
-			return nil, err
-		}
-		count, err := d.u64()
-		if err != nil {
-			return nil, err
-		}
-		if n := scalarSize(elem); n > 0 {
-			if count > uint64(headerLimit) {
-				return nil, errors.New("array length in header is implausible")
-			}
-			if err := d.skip(int64(count) * n); err != nil {
-				return nil, err
-			}
-			return count, nil
-		}
-		if elem != typeString {
-			return nil, fmt.Errorf("unsupported array element type %d", elem)
-		}
-		// The scalar branch above bounds its count; this one did not, so a
-		// declared length of 2^64-1 was walked one string at a time until the
-		// read hit EOF. Same limit, same message.
+		return d.array()
+	}
+	return nil, fmt.Errorf("unknown metadata type %d", t)
+}
+
+// scalar reads one fixed-width value of n bytes and widens it to the largest
+// type of its signedness, so a caller only has to know three shapes.
+func (d *reader) scalar(t uint32, n int64) (any, error) {
+	if err := d.take(n); err != nil {
+		return nil, err
+	}
+	b := make([]byte, n)
+	if _, err := io.ReadFull(d.r, b); err != nil {
+		return nil, err
+	}
+	switch t {
+	case typeUint8, typeBool:
+		return uint64(b[0]), nil
+	case typeInt8:
+		return int64(int8(b[0])), nil
+	case typeUint16:
+		return uint64(binary.LittleEndian.Uint16(b)), nil
+	case typeInt16:
+		return int64(int16(binary.LittleEndian.Uint16(b))), nil
+	case typeUint32:
+		return uint64(binary.LittleEndian.Uint32(b)), nil
+	case typeInt32:
+		return int64(int32(binary.LittleEndian.Uint32(b))), nil
+	case typeFloat32:
+		return float64(math.Float32frombits(binary.LittleEndian.Uint32(b))), nil
+	case typeUint64:
+		return binary.LittleEndian.Uint64(b), nil
+	case typeInt64:
+		return int64(binary.LittleEndian.Uint64(b)), nil
+	case typeFloat64:
+		return math.Float64frombits(binary.LittleEndian.Uint64(b)), nil
+	}
+	return nil, fmt.Errorf("unknown metadata type %d", t)
+}
+
+// array skips a metadata array and reports its element count. The tokenizer
+// vocabulary is the biggest thing in the header and its contents are of no
+// interest, so nothing is retained.
+func (d *reader) array() (any, error) {
+	elem, err := d.u32()
+	if err != nil {
+		return nil, err
+	}
+	count, err := d.u64()
+	if err != nil {
+		return nil, err
+	}
+	if n := scalarSize(elem); n > 0 {
 		if count > uint64(headerLimit) {
 			return nil, errors.New("array length in header is implausible")
 		}
-		for i := uint64(0); i < count; i++ {
-			if _, err := d.str(); err != nil {
-				return nil, err
-			}
+		if err := d.skip(int64(count) * n); err != nil {
+			return nil, err
 		}
 		return count, nil
 	}
-	return nil, fmt.Errorf("unknown metadata type %d", t)
+	if elem != typeString {
+		return nil, fmt.Errorf("unsupported array element type %d", elem)
+	}
+	// The scalar branch above bounds its count; this one did not, so a declared
+	// length of 2^64-1 was walked one string at a time until the read hit EOF.
+	// Same limit, same message.
+	if count > uint64(headerLimit) {
+		return nil, errors.New("array length in header is implausible")
+	}
+	for i := uint64(0); i < count; i++ {
+		if _, err := d.str(); err != nil {
+			return nil, err
+		}
+	}
+	return count, nil
 }
 
 // asInt reads a header value as a model hyperparameter — layer count, hidden
@@ -320,56 +334,92 @@ func Read(path string) (Info, error) {
 	return read(f)
 }
 
+// read walks the header in the order the format lays it out: preamble, the
+// metadata block, then the tensor directory. Each of those is a section of the
+// GGUF spec and changes for its own reasons, so each is its own step here.
 func read(f io.Reader) (Info, error) {
 	d := &reader{r: bufio.NewReaderSize(f, 1<<16)}
 
+	tensorCount, kvCount, err := d.preamble()
+	if err != nil {
+		return Info{}, err
+	}
+	kv, err := d.metadata(kvCount)
+	if err != nil {
+		return Info{}, err
+	}
+	info, err := infoFromMetadata(kv)
+	if err != nil {
+		return Info{}, err
+	}
+	info.TensorCount = tensorCount
+	if err := d.tensors(&info); err != nil {
+		return Info{}, err
+	}
+	if info.Vocab == 0 {
+		// Fall back to the tokenizer array's length, recorded while skipping it.
+		info.Vocab = asInt(kv["tokenizer.ggml.tokens"])
+	}
+	return info, nil
+}
+
+// preamble reads the fixed head of the file: magic, version, and the two counts
+// that bound everything after it.
+func (d *reader) preamble() (tensorCount, kvCount uint64, err error) {
 	m, err := d.u32()
 	if err != nil || m != magic {
-		return Info{}, errors.New("not a GGUF file: bad magic")
+		return 0, 0, errors.New("not a GGUF file: bad magic")
 	}
 	version, err := d.u32()
 	if err != nil {
-		return Info{}, err
+		return 0, 0, err
 	}
 	// v1 put counts in 32 bits and is long gone from published models; refusing
 	// it is honest, since parsing it with the v2 layout silently misreads every
 	// subsequent offset.
 	if version < 2 || version > 3 {
-		return Info{}, fmt.Errorf("unsupported GGUF version %d", version)
+		return 0, 0, fmt.Errorf("unsupported GGUF version %d", version)
 	}
-	tensorCount, err := d.u64()
-	if err != nil {
-		return Info{}, err
+	if tensorCount, err = d.u64(); err != nil {
+		return 0, 0, err
 	}
 	if tensorCount > maxTensors {
-		return Info{}, fmt.Errorf("implausible tensor count %d", tensorCount)
+		return 0, 0, fmt.Errorf("implausible tensor count %d", tensorCount)
 	}
-	kvCount, err := d.u64()
-	if err != nil {
-		return Info{}, err
+	if kvCount, err = d.u64(); err != nil {
+		return 0, 0, err
 	}
 	if kvCount > headerLimit {
-		return Info{}, fmt.Errorf("implausible metadata count %d", kvCount)
+		return 0, 0, fmt.Errorf("implausible metadata count %d", kvCount)
 	}
+	return tensorCount, kvCount, nil
+}
 
+// metadata reads the key/value block. Values it does not care about are still
+// consumed, because their bytes are what the tensor directory sits behind.
+func (d *reader) metadata(kvCount uint64) (map[string]any, error) {
 	kv := make(map[string]any, kvCount)
 	for i := uint64(0); i < kvCount; i++ {
 		key, err := d.str()
 		if err != nil {
-			return Info{}, fmt.Errorf("metadata key %d: %w", i, err)
+			return nil, fmt.Errorf("metadata key %d: %w", i, err)
 		}
 		t, err := d.u32()
 		if err != nil {
-			return Info{}, fmt.Errorf("metadata %q: %w", key, err)
+			return nil, fmt.Errorf("metadata %q: %w", key, err)
 		}
 		v, err := d.value(t)
 		if err != nil {
-			return Info{}, fmt.Errorf("metadata %q: %w", key, err)
+			return nil, fmt.Errorf("metadata %q: %w", key, err)
 		}
 		kv[key] = v
 	}
+	return kv, nil
+}
 
-	info := Info{TensorCount: tensorCount}
+// infoFromMetadata picks the hyperparameters out of the key/value block.
+func infoFromMetadata(kv map[string]any) (Info, error) {
+	var info Info
 	if s, ok := kv["general.architecture"].(string); ok {
 		info.Arch = s
 	}
@@ -399,51 +449,29 @@ func read(f io.Reader) (Info, error) {
 	if info.Layers == 0 || info.Hidden == 0 {
 		return Info{}, fmt.Errorf("GGUF header for %q has no block_count/embedding_length", info.Arch)
 	}
+	return info, nil
+}
 
-	// Tensor directory. Every entry is name, rank, dims, type, offset — the
-	// shapes are the exact parameter count, which no metadata key carries.
+// tensors walks the tensor directory — name, rank, dims, type, offset per entry
+// — and fills in the counts only the shapes can give: total parameters, active
+// parameters, vocabulary, and whether the output projection is tied.
+func (d *reader) tensors(info *Info) error {
 	var params, expertParams int64
 	var hasOutput bool
-	for i := uint64(0); i < tensorCount; i++ {
+	for i := uint64(0); i < info.TensorCount; i++ {
 		name, err := d.str()
 		if err != nil {
-			return Info{}, fmt.Errorf("tensor %d: %w", i, err)
+			return fmt.Errorf("tensor %d: %w", i, err)
 		}
-		rank, err := d.u32()
+		n, dims, err := d.tensorShape(name)
 		if err != nil {
-			return Info{}, fmt.Errorf("tensor %q: %w", name, err)
-		}
-		if rank > 4 {
-			return Info{}, fmt.Errorf("tensor %q has rank %d", name, rank)
-		}
-		// Each dim comes off disk as a raw uint64 and the product is the
-		// parameter count every later estimate is built on. int64(dv) on a
-		// dim past 2^63 is negative, and four plausible-looking dims can
-		// overflow the product outright — either way the tool would report a
-		// confident, wrong model size. Both are refused: this reads
-		// third-party model files, and a bad one should say so.
-		n := int64(1)
-		dims := make([]int64, 0, rank)
-		for j := uint32(0); j < rank; j++ {
-			dv, err := d.u64()
-			if err != nil {
-				return Info{}, fmt.Errorf("tensor %q: %w", name, err)
-			}
-			if dv > maxDim {
-				return Info{}, fmt.Errorf("tensor %q dimension %d is implausible", name, dv)
-			}
-			dim := int64(dv)
-			dims = append(dims, dim)
-			if dim != 0 && n > math.MaxInt64/dim {
-				return Info{}, fmt.Errorf("tensor %q shape overflows the parameter count", name)
-			}
-			n *= dim
+			return err
 		}
 		if _, err := d.u32(); err != nil { // ggml type
-			return Info{}, fmt.Errorf("tensor %q: %w", name, err)
+			return fmt.Errorf("tensor %q: %w", name, err)
 		}
 		if _, err := d.u64(); err != nil { // data offset
-			return Info{}, fmt.Errorf("tensor %q: %w", name, err)
+			return fmt.Errorf("tensor %q: %w", name, err)
 		}
 
 		params += n
@@ -464,18 +492,49 @@ func read(f io.Reader) (Info, error) {
 	// No separate output.weight means the output projection reuses the input
 	// embedding, which is what TiedEmbeddings records.
 	info.Tied = !hasOutput
-	if info.Vocab == 0 {
-		// Fall back to the tokenizer array's length, recorded while skipping it.
-		info.Vocab = asInt(kv["tokenizer.ggml.tokens"])
-	}
 
 	// An MoE reads the router plus the experts it selects, so its active
 	// parameters are the dense remainder plus that fraction of the expert bank.
 	if info.Experts > 1 && info.ExpertsActive > 0 && expertParams > 0 {
 		info.ActiveParams = params - expertParams + expertParams*int64(info.ExpertsActive)/int64(info.Experts)
 	}
+	return nil
+}
 
-	return info, nil
+// tensorShape reads one tensor's rank and dimensions, returning the element
+// count and the dims.
+//
+// Each dim comes off disk as a raw uint64 and the product is the parameter
+// count every later estimate is built on. int64(dv) on a dim past 2^63 is
+// negative, and four plausible-looking dims can overflow the product outright —
+// either way the tool would report a confident, wrong model size. Both are
+// refused: this reads third-party model files, and a bad one should say so.
+func (d *reader) tensorShape(name string) (int64, []int64, error) {
+	rank, err := d.u32()
+	if err != nil {
+		return 0, nil, fmt.Errorf("tensor %q: %w", name, err)
+	}
+	if rank > 4 {
+		return 0, nil, fmt.Errorf("tensor %q has rank %d", name, rank)
+	}
+	n := int64(1)
+	dims := make([]int64, 0, rank)
+	for j := uint32(0); j < rank; j++ {
+		dv, err := d.u64()
+		if err != nil {
+			return 0, nil, fmt.Errorf("tensor %q: %w", name, err)
+		}
+		if dv > maxDim {
+			return 0, nil, fmt.Errorf("tensor %q dimension %d is implausible", name, dv)
+		}
+		dim := int64(dv)
+		dims = append(dims, dim)
+		if dim != 0 && n > math.MaxInt64/dim {
+			return 0, nil, fmt.Errorf("tensor %q shape overflows the parameter count", name)
+		}
+		n *= dim
+	}
+	return n, dims, nil
 }
 
 // Model converts the header into the shape the rest of the tool works in.

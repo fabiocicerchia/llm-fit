@@ -75,22 +75,7 @@ func main() {
 	fs.Usage = func() { fmt.Print(usage) }
 
 	cmd := os.Args[1]
-	// flag.Parse stops at the first non-flag argument, so a single pass would
-	// silently ignore everything after the model name — `check qwen3-8b -ctx
-	// 32768` would plan for the default context and say nothing. Parse
-	// repeatedly, peeling off one positional each time.
-	var positional []string
-	rest := os.Args[2:]
-	for len(rest) > 0 {
-		if err := fs.Parse(rest); err != nil {
-			os.Exit(2)
-		}
-		rest = fs.Args()
-		if len(rest) > 0 {
-			positional = append(positional, rest[0])
-			rest = rest[1:]
-		}
-	}
+	positional := parsePositional(fs, os.Args[2:])
 
 	// Validate before anything divides by it. An unknown -kv silently fell back
 	// to 2.0 bytes at three separate call sites, so "-kv fp16" or "-kv Q8_0"
@@ -160,17 +145,7 @@ func cmdDetect(m hw.Machine, asJSON bool) {
 		fmt.Println("  gpu    none detected — CPU inference only, expect single-digit tokens/sec above 7B")
 	}
 	for _, g := range m.GPUs {
-		fmt.Printf("  gpu    %s — %s free of %s", g.Name, gib(g.FreeBytes), gib(g.TotalBytes))
-		if g.BandwidthGBs > 0 {
-			fmt.Printf(" @ %.0f GB/s", g.BandwidthGBs)
-		}
-		if g.ComputeCapability > 0 {
-			fmt.Printf(", cc %.1f", g.ComputeCapability)
-		}
-		if g.Estimated {
-			fmt.Print("  [not in the spec table: speed estimates unreliable]")
-		}
-		fmt.Println()
+		printGPU(g)
 	}
 	if m.UnifiedMem {
 		fmt.Println("\n  Unified memory: the GPU figure above is the wired limit (~75-80% of RAM),")
@@ -179,6 +154,20 @@ func cmdDetect(m hw.Machine, asJSON bool) {
 	for _, w := range m.Warnings {
 		fmt.Printf("\n  ! %s\n", w)
 	}
+}
+
+func printGPU(g hw.GPU) {
+	fmt.Printf("  gpu    %s — %s free of %s", g.Name, gib(g.FreeBytes), gib(g.TotalBytes))
+	if g.BandwidthGBs > 0 {
+		fmt.Printf(" @ %.0f GB/s", g.BandwidthGBs)
+	}
+	if g.ComputeCapability > 0 {
+		fmt.Printf(", cc %.1f", g.ComputeCapability)
+	}
+	if g.Estimated {
+		fmt.Print("  [not in the spec table: speed estimates unreliable]")
+	}
+	fmt.Println()
 }
 
 func cmdSuggest(m hw.Machine, req advisor.Request, top int, asJSON bool) {
@@ -230,9 +219,28 @@ func cmdSuggest(m hw.Machine, req advisor.Request, top int, asJSON bool) {
 }
 
 func cmdCheck(m hw.Machine, req advisor.Request, query string, asJSON, useHF bool) {
-	var model arch.Model
-	var ok bool
-	var fileFormat *quant.Format
+	model, fileFormat := resolveModel(query, useHF)
+
+	opts := advisor.Inspect(model, m, req)
+	if fileFormat != nil {
+		opts = onlyFormat(opts, fileFormat.Name)
+	}
+	if asJSON {
+		emitJSON(opts)
+		return
+	}
+	printModelShape(model)
+	printKVCache(model, req)
+	printPlanTable(opts)
+}
+
+// resolveModel turns the query into a model, from whichever of the three
+// sources it names: a GGUF file on disk, a Hugging Face repo id, or the
+// built-in catalogue. It does not return on failure.
+//
+// The returned format is non-nil only for a file, where the quantization is a
+// fact about the copy on disk rather than one of the options.
+func resolveModel(query string, useHF bool) (arch.Model, *quant.Format) {
 	switch {
 	// A path to a file on disk is unambiguous — no catalogue entry or repo id
 	// looks like one — so it needs no flag to select it, and it describes the
@@ -243,55 +251,51 @@ func cmdCheck(m hw.Machine, req advisor.Request, query string, asJSON, useHF boo
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		model, ok = info.Model(), true
 		if f, found := info.Format(); found {
-			fileFormat = &f
-		} else {
-			fmt.Fprintf(os.Stderr, "note: %s declares file type %d, which is not in the quant table — "+
-				"sizing every format instead of the one in the file\n", query, info.FileType)
+			return info.Model(), &f
 		}
+		fmt.Fprintf(os.Stderr, "note: %s declares file type %d, which is not in the quant table — "+
+			"sizing every format instead of the one in the file\n", query, info.FileType)
+		return info.Model(), nil
 	case useHF:
 		fetched, err := hfapi.Fetch(query)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		model, ok = fetched, true
-	default:
-		model, ok = catalog.Find(query)
+		return fetched, nil
 	}
-	if !ok {
-		hits := catalog.Matches(query)
-		if len(hits) == 0 {
-			fmt.Fprintf(os.Stderr, "no model matching %q. Try: llm-fit models\n", query)
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stderr, "%q matches several models:\n", query)
-		for _, h := range hits {
-			fmt.Fprintf(os.Stderr, "  %s\n", h.ID)
-		}
+	if model, ok := catalog.Find(query); ok {
+		return model, nil
+	}
+	hits := catalog.Matches(query)
+	if len(hits) == 0 {
+		fmt.Fprintf(os.Stderr, "no model matching %q. Try: llm-fit models\n", query)
 		os.Exit(1)
 	}
+	fmt.Fprintf(os.Stderr, "%q matches several models:\n", query)
+	for _, h := range hits {
+		fmt.Fprintf(os.Stderr, "  %s\n", h.ID)
+	}
+	os.Exit(1)
+	return arch.Model{}, nil
+}
 
-	opts := advisor.Inspect(model, m, req)
-	// The file is one quantization, so plans for the other twenty describe a
-	// download the caller has not made. Filtered after Inspect rather than
-	// inside it: the ranking is the advisor's business, the narrowing is this
-	// command's.
-	if fileFormat != nil {
-		var only []advisor.Option
-		for _, o := range opts {
-			if o.Format.Name == fileFormat.Name {
-				only = append(only, o)
-			}
+// onlyFormat narrows the plans to the quantization the file is already in: the
+// other twenty describe a download the caller has not made. Filtered here
+// rather than inside Inspect — the ranking is the advisor's business, the
+// narrowing is this command's.
+func onlyFormat(opts []advisor.Option, name string) []advisor.Option {
+	var only []advisor.Option
+	for _, o := range opts {
+		if o.Format.Name == name {
+			only = append(only, o)
 		}
-		opts = only
 	}
-	if asJSON {
-		emitJSON(opts)
-		return
-	}
+	return only
+}
 
+func printModelShape(model arch.Model) {
 	fmt.Printf("%s\n  %s parameters", model.Name, params(model.Params))
 	if model.IsMoE() {
 		fmt.Printf(", %s active per token (%d of %d experts)", params(model.Active()), model.ExpertsActive, model.Experts)
@@ -304,7 +308,9 @@ func cmdCheck(m hw.Machine, req advisor.Request, query string, asJSON, useHF boo
 	if model.Notes != "" {
 		fmt.Printf("  %s\n", model.Notes)
 	}
+}
 
+func printKVCache(model arch.Model, req advisor.Request) {
 	kvAt := fit.KVBytes(model, req.Ctx, req.Batch, req.KVType)
 	fmt.Printf("\nKV cache at %s context, %s: %s", thousands(req.Ctx), req.KVType, gib(kvAt))
 	if alt := fit.KVBytes(model, req.Ctx, req.Batch, "q8_0"); req.KVType == "f16" && alt < kvAt {
@@ -312,7 +318,9 @@ func cmdCheck(m hw.Machine, req advisor.Request, query string, asJSON, useHF boo
 	}
 	fmt.Println()
 	fmt.Println()
+}
 
+func printPlanTable(opts []advisor.Option) {
 	fmt.Printf("%-11s %-9s %8s %8s %9s %9s  %s\n", "RUNTIME", "QUANT", "WEIGHTS", "TOTAL", "DECODE", "PREFILL", "")
 	for _, o := range opts {
 		e := o.Estimate
@@ -367,6 +375,27 @@ func cmdModels(asJSON bool) {
 }
 
 // --- helpers -----------------------------------------------------------------
+
+// parsePositional peels the non-flag arguments out of args, in order.
+//
+// flag.Parse stops at the first non-flag argument, so a single pass would
+// silently ignore everything after the model name — `check qwen3-8b -ctx 32768`
+// would plan for the default context and say nothing. Parse repeatedly, taking
+// one positional off the front each time.
+func parsePositional(fs *flag.FlagSet, args []string) []string {
+	var positional []string
+	for len(args) > 0 {
+		if err := fs.Parse(args); err != nil {
+			os.Exit(2)
+		}
+		args = fs.Args()
+		if len(args) > 0 {
+			positional = append(positional, args[0])
+			args = args[1:]
+		}
+	}
+	return positional
+}
 
 func applyOverrides(m *hw.Machine, gpuName string, vram, ram, ramBW float64) {
 	// Naming a card replaces the whole device. Overriding VRAM alone would

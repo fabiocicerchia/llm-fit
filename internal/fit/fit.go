@@ -327,39 +327,10 @@ func EstimatePlan(p Plan, e Engine) Estimate {
 	}
 	est.Fits = true
 
-	// --- decode: bandwidth bound -------------------------------------------
-	//
-	// One token reads every active weight once, plus the entire KV cache once.
-	// The cache term is not a rounding error: at 128k context an 8B model
-	// spends more time reading cache than weights, which is why long-context
-	// generation slows down as the conversation grows.
-	activeFraction := float64(m.Active()) / math.Max(float64(m.Params), 1)
-	weightsRead := float64(est.WeightBytes) * activeFraction
-	kvRead := float64(est.KVBytes)
-
 	gpuShare := float64(layersFit) / math.Max(float64(m.Layers), 1)
 	cpuShare := 1 - gpuShare
-
-	gpuBW, cpuBW := bandwidths(p.Devices)
-	var secondsPerToken float64
-	if gpuShare > 0 && gpuBW > 0 {
-		secondsPerToken += (weightsRead + kvRead) * gpuShare / (e.MBU * gpuBW * 1e9)
-	}
-	if cpuShare > 0 && cpuBW > 0 {
-		secondsPerToken += (weightsRead + kvRead) * cpuShare / (cpuEfficiency(m) * cpuBW * 1e9)
-	}
-	if secondsPerToken > 0 {
-		est.DecodeTPS = 1 / secondsPerToken
-	}
-
-	// --- prefill: compute bound ---------------------------------------------
-	flopsPerToken := 2 * float64(m.Active())
-	// Attention adds a term that grows with how much context is already there.
-	flopsPerToken += 4 * float64(m.Layers) * float64(m.Hidden) * float64(p.Ctx) / 2
-	tflops := effectiveTFLOPS(p.Devices, gpuShare, cpuShare)
-	if flopsPerToken > 0 && tflops > 0 {
-		est.PrefillTPS = e.MFU * tflops * 1e12 / flopsPerToken
-	}
+	est.DecodeTPS = decodeTPS(p, e, est, gpuShare, cpuShare)
+	est.PrefillTPS = prefillTPS(p, e, gpuShare, cpuShare)
 
 	// Report the context the cache can reach in the memory the weights actually
 	// occupy. A GPU-resident model could nominally cache far more by spilling
@@ -375,6 +346,48 @@ func EstimatePlan(p Plan, e Engine) Estimate {
 	est.Verdict = verdictFor(est.DecodeTPS)
 	est.Reasons = append(est.Reasons, explain(est, p, e, cpuLayers, cpuTotal)...)
 	return est
+}
+
+// decodeTPS is the bandwidth-bound half, in tokens per second.
+//
+// One token reads every active weight once, plus the entire KV cache once. The
+// cache term is not a rounding error: at 128k context an 8B model spends more
+// time reading cache than weights, which is why long-context generation slows
+// down as the conversation grows.
+//
+// A layer-split plan pays both rates, each for its share of the layers, and the
+// host's is 10-40x lower — which is the whole reason CPU offload is slow.
+func decodeTPS(p Plan, e Engine, est Estimate, gpuShare, cpuShare float64) float64 {
+	m := p.Model
+	activeFraction := float64(m.Active()) / math.Max(float64(m.Params), 1)
+	bytesPerToken := float64(est.WeightBytes)*activeFraction + float64(est.KVBytes)
+
+	gpuBW, cpuBW := bandwidths(p.Devices)
+	var secondsPerToken float64
+	if gpuShare > 0 && gpuBW > 0 {
+		secondsPerToken += bytesPerToken * gpuShare / (e.MBU * gpuBW * 1e9)
+	}
+	if cpuShare > 0 && cpuBW > 0 {
+		secondsPerToken += bytesPerToken * cpuShare / (cpuEfficiency(m) * cpuBW * 1e9)
+	}
+	if secondsPerToken <= 0 {
+		return 0
+	}
+	return 1 / secondsPerToken
+}
+
+// prefillTPS is the compute-bound half: a matrix-matrix product over the whole
+// prompt at once, so it scales with FLOPs rather than bandwidth.
+func prefillTPS(p Plan, e Engine, gpuShare, cpuShare float64) float64 {
+	m := p.Model
+	flopsPerToken := 2 * float64(m.Active())
+	// Attention adds a term that grows with how much context is already there.
+	flopsPerToken += 4 * float64(m.Layers) * float64(m.Hidden) * float64(p.Ctx) / 2
+	tflops := effectiveTFLOPS(p.Devices, gpuShare, cpuShare)
+	if flopsPerToken <= 0 || tflops <= 0 {
+		return 0
+	}
+	return e.MFU * tflops * 1e12 / flopsPerToken
 }
 
 // cpuCachePressure is the share of free RAM the CPU-side weights must hold to

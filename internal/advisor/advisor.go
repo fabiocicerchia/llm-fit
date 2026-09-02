@@ -220,35 +220,52 @@ func bestFor(model arch.Model, m hw.Machine, devs []fit.Device, req Request) (Op
 		minQ = DefaultMinQuality
 	}
 	for _, eng := range engine.All {
-		if len(req.Engines) > 0 && !named(req.Engines, eng.Name) {
+		if !eligible(eng, m, req) {
 			continue
 		}
-		if ok, _ := eng.RunsOn(m); !ok {
-			continue
+		if cand, ok := bestFormat(model, eng, devs, req, minQ); ok && (!found || better(cand, best, req)) {
+			best, found = cand, true
 		}
-		if req.Serving && !eng.Serving {
-			continue
-		}
-		for _, f := range quant.Formats {
-			if !eng.Supports(f) || f.Quality < minQ {
-				continue
-			}
-			ctx := req.Ctx
-			if ctx > model.MaxCtx {
-				ctx = model.MaxCtx
-			}
-			est := fit.EstimatePlan(fit.Plan{
-				Model: model, Format: f, Ctx: ctx, KVType: req.KVType,
-				Batch: req.Batch, Engine: eng.Name, Devices: devs,
-			}, eng.Engine)
+	}
+	return best, found
+}
 
-			if !est.Fits || est.Verdict < req.MinVerdict {
-				continue
-			}
-			cand := Option{Model: model, Engine: eng, Format: f, Estimate: est, Ctx: ctx, KVType: req.KVType}
-			if !found || better(cand, best, req) {
-				best, found = cand, true
-			}
+// eligible reports whether this engine is in play at all: asked for, runnable
+// on this machine, and built for the workload.
+func eligible(eng engine.Engine, m hw.Machine, req Request) bool {
+	if len(req.Engines) > 0 && !named(req.Engines, eng.Name) {
+		return false
+	}
+	if ok, _ := eng.RunsOn(m); !ok {
+		return false
+	}
+	return !req.Serving || eng.Serving
+}
+
+// bestFormat is the inner search: the best quantization this one engine can
+// load that still clears the verdict and quality bars.
+func bestFormat(model arch.Model, eng engine.Engine, devs []fit.Device, req Request, minQ int) (Option, bool) {
+	var best Option
+	var found bool
+	for _, f := range quant.Formats {
+		if !eng.Supports(f) || f.Quality < minQ {
+			continue
+		}
+		ctx := req.Ctx
+		if ctx > model.MaxCtx {
+			ctx = model.MaxCtx
+		}
+		est := fit.EstimatePlan(fit.Plan{
+			Model: model, Format: f, Ctx: ctx, KVType: req.KVType,
+			Batch: req.Batch, Engine: eng.Name, Devices: devs,
+		}, eng.Engine)
+
+		if !est.Fits || est.Verdict < req.MinVerdict {
+			continue
+		}
+		cand := Option{Model: model, Engine: eng, Format: f, Estimate: est, Ctx: ctx, KVType: req.KVType}
+		if !found || better(cand, best, req) {
+			best, found = cand, true
 		}
 	}
 	return best, found

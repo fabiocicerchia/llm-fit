@@ -76,15 +76,23 @@ func ValidateID(id string) error {
 			return fmt.Errorf("%q is not a Hugging Face repo id (empty or relative path segment)", id)
 		}
 		for _, r := range part {
-			switch {
-			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			case r == '-', r == '_', r == '.':
-			default:
+			if !legalIDRune(r) {
 				return fmt.Errorf("%q is not a Hugging Face repo id (illegal character %q)", id, r)
 			}
 		}
 	}
 	return nil
+}
+
+// legalIDRune is the allowlist a repo id segment is held to.
+func legalIDRune(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	case r == '-', r == '_', r == '.':
+		return true
+	}
+	return false
 }
 
 // Fetch builds a Model from a Hugging Face repo id such as "Qwen/Qwen3-8B".
@@ -109,6 +117,27 @@ func Fetch(id string) (arch.Model, error) {
 		return arch.Model{}, fmt.Errorf("%s: config.json has no usable architecture (is it a GGUF-only or adapter repo?)", id)
 	}
 
+	m := modelFromConfig(id, cfg)
+
+	// The parameter count is not in config.json. The safetensors index records
+	// the total byte size, which divided by the dtype width gives it.
+	var idx safetensorsIndex
+	if err := getJSON(client, id, "model.safetensors.index.json", &idx); err == nil && idx.Metadata.TotalSize > 0 {
+		m.Params = idx.Metadata.TotalSize / 2 // bf16/fp16 checkpoints
+	} else {
+		m.Params = estimateParams(m)
+	}
+
+	if m.IsMoE() && m.ExpertsActive > 0 && m.Experts > 0 {
+		m.ActiveParams = activeParams(m)
+	}
+	return m, nil
+}
+
+// modelFromConfig maps config.json onto the shape the maths works in, filling
+// in the keys that older repos predate rather than leaving a zero for something
+// downstream to divide by.
+func modelFromConfig(id string, cfg config) arch.Model {
 	m := arch.Model{
 		ID: id, Name: id, Family: cfg.ModelType,
 		Layers: cfg.NumHiddenLayers, Hidden: cfg.HiddenSize,
@@ -132,20 +161,7 @@ func Fetch(id string) (arch.Model, error) {
 		m.KVLoraRank = cfg.KVLoraRank
 		m.QKRopeHeadDim = cfg.QKRopeHeadDim
 	}
-
-	// The parameter count is not in config.json. The safetensors index records
-	// the total byte size, which divided by the dtype width gives it.
-	var idx safetensorsIndex
-	if err := getJSON(client, id, "model.safetensors.index.json", &idx); err == nil && idx.Metadata.TotalSize > 0 {
-		m.Params = idx.Metadata.TotalSize / 2 // bf16/fp16 checkpoints
-	} else {
-		m.Params = estimateParams(m)
-	}
-
-	if m.IsMoE() && m.ExpertsActive > 0 && m.Experts > 0 {
-		m.ActiveParams = activeParams(m)
-	}
-	return m, nil
+	return m
 }
 
 // paramCount is the parameter count the shape implies, with ffnCopies

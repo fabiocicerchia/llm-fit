@@ -239,19 +239,9 @@ func (d *reader) tensors(info *Info) error {
 	var params, expertParams int64
 	var hasOutput bool
 	for i := uint64(0); i < info.TensorCount; i++ {
-		name, err := d.str()
-		if err != nil {
-			return fmt.Errorf("tensor %d: %w", i, err)
-		}
-		n, dims, err := d.tensorShape(name)
+		name, n, dims, err := d.tensorEntry(i)
 		if err != nil {
 			return err
-		}
-		if _, err := d.u32(); err != nil { // ggml type
-			return fmt.Errorf("tensor %q: %w", name, err)
-		}
-		if _, err := d.u64(); err != nil { // data offset
-			return fmt.Errorf("tensor %q: %w", name, err)
 		}
 
 		params += n
@@ -279,6 +269,27 @@ func (d *reader) tensors(info *Info) error {
 		info.ActiveParams = params - expertParams + expertParams*int64(info.ExpertsActive)/int64(info.Experts)
 	}
 	return nil
+}
+
+// tensorEntry consumes one entry of the tensor directory — name, shape, ggml
+// type, data offset — and returns the name, element count and dims. The type
+// and offset are read only to advance past them; nothing here needs their values.
+func (d *reader) tensorEntry(i uint64) (string, int64, []int64, error) {
+	name, err := d.str()
+	if err != nil {
+		return "", 0, nil, fmt.Errorf("tensor %d: %w", i, err)
+	}
+	n, dims, err := d.tensorShape(name)
+	if err != nil {
+		return "", 0, nil, err
+	}
+	if _, err := d.u32(); err != nil { // ggml type
+		return "", 0, nil, fmt.Errorf("tensor %q: %w", name, err)
+	}
+	if _, err := d.u64(); err != nil { // data offset
+		return "", 0, nil, fmt.Errorf("tensor %q: %w", name, err)
+	}
+	return name, n, dims, nil
 }
 
 // tensorShape reads one tensor's rank and dimensions, returning the element

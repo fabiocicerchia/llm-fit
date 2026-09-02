@@ -135,6 +135,12 @@ func (d *reader) scalar(t uint32, n int64) (any, error) {
 	if _, err := io.ReadFull(d.r, b); err != nil {
 		return nil, err
 	}
+	return widen(t, b)
+}
+
+// widen turns the raw little-endian bytes of a scalar into the widest Go type
+// of its signedness, so a caller only has to handle uint64, int64 and float64.
+func widen(t uint32, b []byte) (any, error) {
 	switch t {
 	case typeUint8, typeBool:
 		return uint64(b[0]), nil

@@ -108,19 +108,9 @@ func fetch(client *http.Client, id string) (arch.Model, error) {
 		return arch.Model{}, err
 	}
 
-	var cfg config
-	if err := getJSON(client, id, "config.json", &cfg); err != nil {
+	cfg, err := fetchConfig(client, id)
+	if err != nil {
 		return arch.Model{}, err
-	}
-	// Multimodal repos put the language model one level down; the vision tower
-	// is not what generates tokens, so its shape is not what we plan against.
-	if cfg.TextConfig != nil && cfg.TextConfig.NumHiddenLayers > 0 {
-		inner := *cfg.TextConfig
-		inner.TieWordEmbeddings = cfg.TieWordEmbeddings || inner.TieWordEmbeddings
-		cfg = inner
-	}
-	if cfg.NumHiddenLayers == 0 || cfg.HiddenSize == 0 {
-		return arch.Model{}, fmt.Errorf("%s: config.json has no usable architecture (is it a GGUF-only or adapter repo?)", id)
 	}
 
 	m := modelFromConfig(id, cfg)
@@ -138,6 +128,26 @@ func fetch(client *http.Client, id string) (arch.Model, error) {
 		m.ActiveParams = activeParams(m)
 	}
 	return m, nil
+}
+
+// fetchConfig reads config.json and returns the block of it that describes the
+// model that generates tokens, refusing a repo whose config cannot describe one.
+func fetchConfig(client *http.Client, id string) (config, error) {
+	var cfg config
+	if err := getJSON(client, id, "config.json", &cfg); err != nil {
+		return config{}, err
+	}
+	// Multimodal repos put the language model one level down; the vision tower
+	// is not what generates tokens, so its shape is not what we plan against.
+	if cfg.TextConfig != nil && cfg.TextConfig.NumHiddenLayers > 0 {
+		inner := *cfg.TextConfig
+		inner.TieWordEmbeddings = cfg.TieWordEmbeddings || inner.TieWordEmbeddings
+		cfg = inner
+	}
+	if cfg.NumHiddenLayers == 0 || cfg.HiddenSize == 0 {
+		return config{}, fmt.Errorf("%s: config.json has no usable architecture (is it a GGUF-only or adapter repo?)", id)
+	}
+	return cfg, nil
 }
 
 // modelFromConfig maps config.json onto the shape the maths works in, filling

@@ -72,7 +72,7 @@ func resolveModel(query string, useHF bool) (arch.Model, *quant.Format) {
 		info, err := gguf.Read(query)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			os.Exit(exitDataErr)
 		}
 		if f, found := info.Format(); found {
 			return info.Model(), &f
@@ -84,7 +84,7 @@ func resolveModel(query string, useHF bool) (arch.Model, *quant.Format) {
 		fetched, err := hfapi.Fetch(query)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			os.Exit(exitUnavailable)
 		}
 		return fetched, nil
 	}
@@ -94,13 +94,13 @@ func resolveModel(query string, useHF bool) (arch.Model, *quant.Format) {
 	hits := catalog.Matches(query)
 	if len(hits) == 0 {
 		fmt.Fprintf(os.Stderr, "no model matching %q. Try: llm-fit models\n", query)
-		os.Exit(1)
+		os.Exit(exitUsage)
 	}
 	fmt.Fprintf(os.Stderr, "%q matches several models:\n", query)
 	for _, h := range hits {
 		fmt.Fprintf(os.Stderr, "  %s\n", h.ID)
 	}
-	os.Exit(1)
+	os.Exit(exitUsage)
 	return arch.Model{}, nil
 }
 

@@ -52,7 +52,7 @@ as "this is the right ballpark" rather than a benchmark.
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Print(usage)
-		os.Exit(2)
+		os.Exit(exitUsage)
 	}
 
 	fs := flag.NewFlagSet("llm-fit", flag.ExitOnError)
@@ -82,7 +82,7 @@ func main() {
 	if _, ok := quant.KVCacheBytesPerElement[*kv]; !ok {
 		fmt.Fprintf(os.Stderr, "unknown -kv %q; valid values are %s\n",
 			*kv, strings.Join(quant.KVTypes(), ", "))
-		os.Exit(2)
+		os.Exit(exitUsage)
 	}
 
 	machine := hw.Detect()
@@ -105,7 +105,7 @@ func main() {
 	case "check":
 		if len(positional) == 0 {
 			fmt.Fprintln(os.Stderr, "check needs a model name, e.g. llm-fit check qwen3-8b")
-			os.Exit(2)
+			os.Exit(exitUsage)
 		}
 		cmdCheck(machine, req, strings.Join(positional, " "), *asJSON, *useHF)
 	case "engines":
@@ -114,7 +114,7 @@ func main() {
 		cmdModels(*asJSON)
 	default:
 		fmt.Print(usage)
-		os.Exit(2)
+		os.Exit(exitUsage)
 	}
 }
 
@@ -127,6 +127,8 @@ func main() {
 func parsePositional(fs *flag.FlagSet, args []string) []string {
 	var positional []string
 	for len(args) > 0 {
+		// Unreachable while the set is flag.ExitOnError: Parse exits 2 itself
+		// rather than returning. Mirror its code for the day that changes.
 		if err := fs.Parse(args); err != nil {
 			os.Exit(2)
 		}
@@ -148,7 +150,7 @@ func applyOverrides(m *hw.Machine, gpuName string, vram, ram, ramBW float64) {
 		spec, ok := hw.Lookup(gpuName)
 		if !ok {
 			fmt.Fprintf(os.Stderr, "unknown GPU %q — pass -vram and -ram-bandwidth instead\n", gpuName)
-			os.Exit(2)
+			os.Exit(exitUsage)
 		}
 		b := int64(spec.VRAMGiB * (1 << 30))
 		m.GPUs = []hw.GPU{{

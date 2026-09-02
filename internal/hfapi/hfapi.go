@@ -97,10 +97,16 @@ func legalIDRune(r rune) bool {
 
 // Fetch builds a Model from a Hugging Face repo id such as "Qwen/Qwen3-8B".
 func Fetch(id string) (arch.Model, error) {
+	return fetch(&http.Client{Timeout: requestTimeout}, id)
+}
+
+// fetch is Fetch with the HTTP client supplied, so the tests can point one at a
+// server of their own instead of huggingface.co. base stays a constant: the id
+// allowlist is only worth anything if the host it is pasted into cannot move.
+func fetch(client *http.Client, id string) (arch.Model, error) {
 	if err := ValidateID(id); err != nil {
 		return arch.Model{}, err
 	}
-	client := &http.Client{Timeout: requestTimeout}
 
 	var cfg config
 	if err := getJSON(client, id, "config.json", &cfg); err != nil {

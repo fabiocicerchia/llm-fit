@@ -161,12 +161,21 @@ func WeightBytes(m arch.Model, f quant.Format) int64 {
 	return int64(body + embed + output)
 }
 
+// kvElementBytes is the per-element cost of the named cache precision.
+//
+// One place, because the fallback used to be written out at each of the three
+// call sites: an unknown -kv silently sized every cache as f16, and a plan for
+// a quantized cache came back with an f16 context ceiling.
+func kvElementBytes(kvType string) float64 {
+	if elem, ok := quant.KVCacheBytesPerElement[kvType]; ok {
+		return elem
+	}
+	return 2.0 // f16
+}
+
 // KVBytes is the cache for the whole context window at the given precision.
 func KVBytes(m arch.Model, ctx, batch int, kvType string) int64 {
-	elem, ok := quant.KVCacheBytesPerElement[kvType]
-	if !ok {
-		elem = 2.0
-	}
+	elem := kvElementBytes(kvType)
 	if batch < 1 {
 		batch = 1
 	}
@@ -409,11 +418,7 @@ func plural(n int) string {
 // MaxContext is the largest context the remaining memory can hold once the
 // weights are placed. Usually the number people actually want.
 func maxContext(m arch.Model, p Plan, e Engine, capacity int64) int {
-	elem, ok := quant.KVCacheBytesPerElement[p.KVType]
-	if !ok {
-		elem = 2.0
-	}
-	perToken := m.KVBytesPerToken(elem) * float64(max(p.Batch, 1))
+	perToken := m.KVBytesPerToken(kvElementBytes(p.KVType)) * float64(max(p.Batch, 1))
 	if perToken <= 0 {
 		return 0
 	}
@@ -431,11 +436,7 @@ func concurrency(m arch.Model, p Plan, e Engine, gpuBytes, weights, overhead int
 	if !e.CanOffloadCPU && gpuBytes == 0 {
 		return 0
 	}
-	elem, ok := quant.KVCacheBytesPerElement[p.KVType]
-	if !ok {
-		elem = 2.0
-	}
-	perSeq := m.KVBytesPerToken(elem) * float64(p.Ctx)
+	perSeq := m.KVBytesPerToken(kvElementBytes(p.KVType)) * float64(p.Ctx)
 	if perSeq <= 0 {
 		return 0
 	}

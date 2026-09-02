@@ -139,22 +139,24 @@ func Fetch(id string) (arch.Model, error) {
 	if err := getJSON(client, id, "model.safetensors.index.json", &idx); err == nil && idx.Metadata.TotalSize > 0 {
 		m.Params = idx.Metadata.TotalSize / 2 // bf16/fp16 checkpoints
 	} else {
-		m.Params = estimateParams(m, cfg)
+		m.Params = estimateParams(m)
 	}
 
 	if m.IsMoE() && m.ExpertsActive > 0 && m.Experts > 0 {
-		// Only the routed experts scale down; attention and embeddings are read
-		// every token regardless.
 		m.ActiveParams = activeParams(m)
 	}
 	return m, nil
 }
 
-// estimateParams reconstructs the count from the shape when the index is
-// missing, which happens on single-file and older repos.
-func estimateParams(m arch.Model, cfg config) int64 {
+// paramCount is the parameter count the shape implies, with ffnCopies
+// feed-forward blocks per layer.
+//
+// Total and active differ only in that number — every expert versus the few
+// routed per token — and they have to be computed the same way or the active
+// fraction the speed estimate divides by is nonsense rather than merely
+// approximate. Hence one formula with a knob, not two copies.
+func paramCount(m arch.Model, ffnCopies int64) int64 {
 	h := int64(m.Hidden)
-	l := int64(m.Layers)
 	kvRatio := float64(m.KVHeads) / float64(max(m.Heads, 1))
 
 	// Attention: Q is hidden², K and V scale with the KV head ratio, O is hidden².
@@ -162,28 +164,27 @@ func estimateParams(m arch.Model, cfg config) int64 {
 	// Feed-forward is typically 8/3·hidden per layer across three projections
 	// in a gated architecture.
 	ffn := int64(8 * h * h)
-	perLayer := attn + ffn
-	if m.Experts > 1 {
-		perLayer = attn + ffn*int64(m.Experts)
-	}
 	embed := int64(m.Vocab) * h
 	if !m.TiedEmbeddings {
 		embed *= 2
 	}
-	return perLayer*l + embed
+	return (attn+ffn*ffnCopies)*int64(m.Layers) + embed
 }
 
-func activeParams(m arch.Model) int64 {
-	h := int64(m.Hidden)
-	l := int64(m.Layers)
-	kvRatio := float64(m.KVHeads) / float64(max(m.Heads, 1))
-	attn := int64(float64(h*h) * (2 + 2*kvRatio))
-	ffnOne := int64(8 * h * h)
-	embed := int64(m.Vocab) * h
-	if !m.TiedEmbeddings {
-		embed *= 2
+// estimateParams reconstructs the count from the shape when the index is
+// missing, which happens on single-file and older repos.
+func estimateParams(m arch.Model) int64 {
+	copies := int64(1)
+	if m.Experts > 1 {
+		copies = int64(m.Experts)
 	}
-	return (attn+ffnOne*int64(m.ExpertsActive))*l + embed
+	return paramCount(m, copies)
+}
+
+// activeParams counts only the experts a token routes to; attention and
+// embeddings are read every token regardless.
+func activeParams(m arch.Model) int64 {
+	return paramCount(m, int64(m.ExpertsActive))
 }
 
 func getJSON(c *http.Client, id, file string, v any) error {

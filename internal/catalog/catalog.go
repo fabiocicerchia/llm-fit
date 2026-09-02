@@ -40,13 +40,7 @@ func Find(q string) (arch.Model, bool) {
 			return m, true
 		}
 	}
-	var hits []arch.Model
-	for _, m := range models {
-		if strings.Contains(strings.ToLower(m.ID), lq) || strings.Contains(strings.ToLower(m.Name), lq) {
-			hits = append(hits, m)
-		}
-	}
-	if len(hits) == 1 {
+	if hits := matching(lq); len(hits) == 1 {
 		return hits[0], true
 	}
 	return arch.Model{}, false
@@ -54,8 +48,14 @@ func Find(q string) (arch.Model, bool) {
 
 // Matches returns every candidate for an ambiguous query, so the CLI can list
 // them instead of guessing.
-func Matches(q string) []arch.Model {
-	lq := strings.ToLower(q)
+func Matches(q string) []arch.Model { return matching(strings.ToLower(q)) }
+
+// matching is the fragment search both of the above run.
+//
+// One copy because they have to agree: the CLI calls Find, and when it comes
+// back empty calls Matches to print the alternatives. Two loops that could
+// drift is a "matches several models:" followed by nothing.
+func matching(lq string) []arch.Model {
 	var hits []arch.Model
 	for _, m := range models {
 		if strings.Contains(strings.ToLower(m.ID), lq) || strings.Contains(strings.ToLower(m.Name), lq) {

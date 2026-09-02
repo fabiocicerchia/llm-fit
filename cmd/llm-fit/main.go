@@ -17,6 +17,7 @@ import (
 	"github.com/fabiocicerchia/llm-fit/internal/hfapi"
 	"github.com/fabiocicerchia/llm-fit/internal/hw"
 	"github.com/fabiocicerchia/llm-fit/internal/quant"
+	"github.com/fabiocicerchia/llm-fit/internal/validate"
 )
 
 const usage = `llm-fit — which LLMs this machine can run, and how fast
@@ -27,6 +28,8 @@ const usage = `llm-fit — which LLMs this machine can run, and how fast
   llm-fit check <file.gguf>      read the shape and quant from a local GGUF file
   llm-fit engines                runtime support matrix for this machine
   llm-fit models                 the built-in catalogue
+  llm-fit validate [FILE]        compare the tool's own estimates against
+                                 measured runs (default bench/observations.tsv)
 
 Flags
   -ctx N              context length to plan for (default 8192)
@@ -170,6 +173,12 @@ func main() {
 		cmdEngines(machine)
 	case "models":
 		cmdModels(*asJSON)
+	case "validate":
+		path := "bench/observations.tsv"
+		if len(positional) > 0 {
+			path = positional[0]
+		}
+		cmdValidate(path)
 	default:
 		fmt.Print(usage)
 		os.Exit(2)
@@ -540,4 +549,30 @@ func emit(v any) {
 func isFile(query string) bool {
 	st, err := os.Stat(query)
 	return err == nil && st.Mode().IsRegular()
+}
+
+// cmdValidate compares the tool's own estimates against measured runs.
+//
+// The arithmetic is documented and the constants come from published figures,
+// and exactly ONE end-to-end number has ever been checked against a stopwatch.
+// This does not produce measurements — nothing runs a model here — it turns a
+// file of them into the table that answers the question, and says plainly when
+// there are too few rows for the answer to mean anything.
+func cmdValidate(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "llm-fit: %v\n", err)
+		fmt.Fprintln(os.Stderr, "  bench/observations.tsv is the file; see its header for how to add a row.")
+		os.Exit(2)
+	}
+	defer f.Close()
+
+	obs, err := validate.Parse(f)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "llm-fit: %s: %v\n", path, err)
+		os.Exit(2)
+	}
+	s := validate.Compare(obs)
+	fmt.Print(s.Text())
+	fmt.Printf("\naccuracy band for the docs: %s\n", s.Band())
 }

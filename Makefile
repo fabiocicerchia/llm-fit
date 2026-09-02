@@ -2,7 +2,7 @@ BINARY  := llm-fit
 BIN_DIR := bin
 PKG     := ./cmd/llm-fit
 
-.PHONY: all build test tidy lint clean demo help
+.PHONY: all build test tidy lint clean demo validate help
 
 .DEFAULT_GOAL := help
 
@@ -37,6 +37,10 @@ demo: build
 	./$(BIN_DIR)/$(BINARY) detect
 	@echo
 	./$(BIN_DIR)/$(BINARY) suggest
+
+## validate: predicted vs measured tokens/sec, from bench/observations.tsv
+validate: build
+	./$(BIN_DIR)/$(BINARY) validate
 
 ## clean: remove build artifacts
 clean:

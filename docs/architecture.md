@@ -166,9 +166,47 @@ that change the answer are modelled, not just listed:
 
 ## What the numbers are, and are not
 
-Estimates from bandwidth and compute, not measurements. On hardware in the
-built-in table they are usually within about 20% — the right ballpark for
-choosing, not a benchmark. Three things push them off:
+Estimates from bandwidth and compute, not measurements.
+
+**The accuracy band is unknown, and this document used to claim otherwise.** It
+said "usually within about 20%", which was an assertion about arithmetic rather
+than a result: exactly ONE end-to-end number here has ever been held up against
+a stopwatch. On that one — Qwen3-30B-A3B at Q4_K_M, 26 of 48 layers on an RTX
+3060 — the tool predicts 2.8 tok/s against a measured 2.4, and the measured
+figure is explicitly a floor because the machine was still swapping. One point
+cannot distinguish a systematic bias from a machine having a bad afternoon.
+
+`llm-fit validate` is how that stops being true. It reads
+`bench/observations.tsv` — one row per measured run, with the machine and the
+settings written down beside the number — and prints predicted against
+measured, per row and as a geometric mean:
+
+```console
+$ llm-fit validate
+model                  quant    engine     predicted  measured    ratio
+------------------------------------------------------------------------
+Qwen/Qwen3-30B-A3B     q4_k_m   llama.cpp        2.8       2.4    1.18x
+
+1 observation(s) compared
+geometric mean ratio  1.18x  (>1 means the tool is optimistic)
+
+NOT AN ACCURACY BAND. 1 observation(s) cannot separate a systematic
+bias from one machine that was swapping...
+```
+
+It refuses to state a band below three observations, and says so rather than
+quoting a figure — the false precision the old sentence had. The mean is
+geometric because these are ratios: a 2x overestimate and a 2x underestimate
+have to cancel, and an arithmetic mean reports them as a 25% optimistic bias
+that is not there. Above three, a mean ratio over 1.3 is called out as a
+**systematic overestimate**, which is the direction that matters: an
+overestimate ranks a model first on a machine where it is unusable, while an
+underestimate merely hides one that would have worked.
+
+Adding a row is a stopwatch and four numbers from `llm-fit detect`. Two more
+runs on different hardware and the band above stops being a blank.
+
+Three things push the estimates off:
 
 - A GPU not in the spec table has no known bandwidth. It is flagged, and the
   speed figures that follow are guesses.

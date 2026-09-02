@@ -1,0 +1,22 @@
+# Measured decode rates, one row per run. TAB-separated.
+#
+# WHY THIS FILE EXISTS: llm-fit prints a tokens/sec estimate for every model
+# it ranks, and exactly ONE of those numbers has ever been checked against a
+# stopwatch. `llm-fit validate` turns this file into the predicted-vs-measured
+# table, so collecting the rest is an afternoon rather than a project.
+#
+# HOW TO ADD A ROW
+#   1. Run the model. Record the DECODE rate the runtime reports (llama.cpp
+#      prints "eval time ... tokens per second"), not the prompt/prefill rate.
+#   2. Record what the machine actually had FREE, not what is installed —
+#      `llm-fit detect` prints both, and free is what the arithmetic uses.
+#   3. ram_bw_gbs is MEASURED memcpy bandwidth (`llm-fit detect` says
+#      "(measured)" when it has one). A spec-sheet number here silently
+#      argues for the wrong correction.
+#   4. Say what was going on in `note`. A machine that was swapping produces
+#      a real number that means something different.
+#
+# Nothing here is estimated, interpolated or filled in from a review. A row is
+# a stopwatch or it is not a row.
+model	quant	ctx	kv	batch	engine	gpu	vram_gb	vram_bw_gbs	vram_tflops	ram_gb	ram_bw_gbs	measured_tps	note
+Qwen/Qwen3-30B-A3B	q4_k_m	16384	q8_0	1	llama.cpp	RTX 3060 12GB	11.5	360	12.7	28	43	2.4	26 of 48 layers on the GPU, 22 on a Ryzen 3700X; swap was still draining, so this is a floor. Source of cpuGatherEfficiency in internal/fit/fit.go.

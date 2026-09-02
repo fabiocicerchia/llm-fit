@@ -8,6 +8,7 @@ package hw
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -24,6 +25,28 @@ const (
 	Intel   Vendor = "Intel"
 	Apple   Vendor = "Apple"
 	Unknown Vendor = "unknown"
+)
+
+const (
+	// assumedRAMBandwidthGBs is the last resort when the measurement fails: a
+	// mid-range DDR4 figure, deliberately unremarkable. It appears in the
+	// warning that reports it, so the number and the sentence cannot drift.
+	assumedRAMBandwidthGBs = 50
+
+	// Fallbacks for an Apple chip the table does not know — roughly a base M1,
+	// the slowest silicon still worth planning for.
+	unknownAppleBandwidthGBs = 100
+	unknownAppleTFLOPS       = 5
+
+	// Metal will not hand the GPU all of system memory. The wired limit is
+	// about 75% of RAM, a little more on machines with plenty of it.
+	metalWiredFraction      = 0.75
+	metalWiredFractionLarge = 0.80
+	largeUnifiedRAMBytes    = 64 << 30
+
+	// probeTimeout bounds each detection subprocess. A wedged nvidia-smi on a
+	// broken driver hangs for ever, and detection must not be what hangs.
+	probeTimeout = 5 * time.Second
 )
 
 type GPU struct {
@@ -83,10 +106,11 @@ func Detect() Machine {
 			m.RAMBandwidth = bw
 			m.RAMMeasured = true
 		} else {
-			m.RAMBandwidth = 50
+			m.RAMBandwidth = assumedRAMBandwidthGBs
 			m.RAMEstimated = true
-			m.Warnings = append(m.Warnings,
-				"system RAM bandwidth could not be measured; assuming 50 GB/s. Pass -ram-bandwidth to correct it — every CPU-offload speed figure divides by this")
+			m.Warnings = append(m.Warnings, fmt.Sprintf(
+				"system RAM bandwidth could not be measured; assuming %d GB/s. Pass -ram-bandwidth to correct it — every CPU-offload speed figure divides by this",
+				assumedRAMBandwidthGBs))
 		}
 	}
 	return m
@@ -142,18 +166,16 @@ func detectDarwin(m *Machine) {
 	bw, tf, ok := lookupApple(m.CPUModel)
 	if !ok {
 		m.Warnings = append(m.Warnings, "unrecognised Apple chip "+m.CPUModel+"; memory bandwidth unknown")
-		bw, tf = 100, 5
+		bw, tf = unknownAppleBandwidthGBs, unknownAppleTFLOPS
 		m.RAMEstimated = true
 	}
 	m.RAMBandwidth = bw
 
-	// Metal will not hand the GPU all of system memory. The default wired limit
-	// is about 75% (a little more on machines with 64GB+), and exceeding it
-	// does not fail — it silently swaps, which looks like the model working and
-	// running at one token per second.
-	usable := int64(float64(m.RAMTotal) * 0.75)
-	if m.RAMTotal >= 64*(1<<30) {
-		usable = int64(float64(m.RAMTotal) * 0.80)
+	// Exceeding the wired limit does not fail — it silently swaps, which looks
+	// like the model working and running at one token per second.
+	usable := int64(float64(m.RAMTotal) * metalWiredFraction)
+	if m.RAMTotal >= largeUnifiedRAMBytes {
+		usable = int64(float64(m.RAMTotal) * metalWiredFractionLarge)
 	}
 	m.GPUs = append(m.GPUs, GPU{
 		Name: m.CPUModel, Vendor: Apple,
@@ -244,8 +266,6 @@ func run(name string, args ...string) string {
 	if _, err := exec.LookPath(name); err != nil {
 		return ""
 	}
-	// A wedged nvidia-smi on a broken driver hangs forever; a detection step
-	// must not be the thing that hangs the tool.
 	done := make(chan string, 1)
 	cmd := exec.Command(name, args...)
 	go func() {
@@ -259,7 +279,7 @@ func run(name string, args ...string) string {
 	select {
 	case s := <-done:
 		return s
-	case <-time.After(5 * time.Second):
+	case <-time.After(probeTimeout):
 		_ = cmd.Process.Kill()
 		return ""
 	}

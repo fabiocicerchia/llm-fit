@@ -26,6 +26,11 @@ import (
 	"github.com/fabiocicerchia/llm-fit/internal/quant"
 )
 
+// ramHeadroom is the share of free system RAM a plan may use. Filling it to the
+// brim invites the OOM killer mid-generation, and on Linux it picks the
+// inference process.
+const ramHeadroom = 0.85
+
 type Request struct {
 	Ctx    int
 	KVType string
@@ -65,10 +70,7 @@ func Devices(m hw.Machine) []fit.Device {
 		})
 	}
 	if !m.UnifiedMem {
-		free := m.RAMFree
-		// Leave headroom: filling system RAM to the brim invites the OOM killer
-		// mid-generation, and on Linux it will pick the inference process.
-		free = int64(float64(free) * 0.85)
+		free := int64(float64(m.RAMFree) * ramHeadroom)
 		devs = append(devs, fit.Device{
 			Name: "system RAM", BytesFree: free,
 			BandwidthGBs: m.RAMBandwidth, IsCPU: true,

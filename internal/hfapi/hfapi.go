@@ -20,7 +20,18 @@ import (
 	"github.com/fabiocicerchia/llm-fit/internal/arch"
 )
 
-const base = "https://huggingface.co"
+const (
+	base = "https://huggingface.co"
+
+	// requestTimeout bounds one metadata fetch. These are kilobyte files.
+	requestTimeout = 20 * time.Second
+	// maxResponseBytes caps what an unexpected response can make us buffer; a
+	// config.json is a few kilobytes and an index a few hundred.
+	maxResponseBytes = 4 << 20
+	// defaultMaxCtx stands in when a repo omits max_position_embeddings, which
+	// predates the key. Low enough to be a floor rather than a claim.
+	defaultMaxCtx = 4096
+)
 
 type config struct {
 	Architectures     []string `json:"architectures"`
@@ -81,7 +92,7 @@ func Fetch(id string) (arch.Model, error) {
 	if err := ValidateID(id); err != nil {
 		return arch.Model{}, err
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{Timeout: requestTimeout}
 
 	var cfg config
 	if err := getJSON(client, id, "config.json", &cfg); err != nil {
@@ -110,7 +121,7 @@ func Fetch(id string) (arch.Model, error) {
 		m.KVHeads = m.Heads // no GQA stated means one KV head per query head
 	}
 	if m.MaxCtx == 0 {
-		m.MaxCtx = 4096
+		m.MaxCtx = defaultMaxCtx
 	}
 	m.Experts = cfg.NumLocalExperts
 	if m.Experts == 0 {
@@ -202,7 +213,7 @@ func getJSON(c *http.Client, id, file string, v any) error {
 		return fmt.Errorf("%s: %s", id, resp.Status)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return err
 	}

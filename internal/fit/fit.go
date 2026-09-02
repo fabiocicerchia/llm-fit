@@ -32,6 +32,17 @@ const (
 	GiB = 1 << 30
 )
 
+const (
+	// maxUbatch is the micro-batch every engine here caps at, so the activation
+	// working set stops growing past it however large the batch.
+	maxUbatch = 512
+
+	// cpuPrefillShare: CPU prefill is roughly two orders of magnitude slower
+	// than a GPU's, so CPU-resident layers contribute almost nothing rather
+	// than pretending to help.
+	cpuPrefillShare = 0.02
+)
+
 // Device is one place weights can live. A machine is a list of these: usually
 // some GPUs and always the host.
 type Device struct {
@@ -181,8 +192,8 @@ func Overhead(m arch.Model, e Engine, ctx, batch int, onGPU bool) int64 {
 	if ubatch < 1 {
 		ubatch = 1
 	}
-	if ubatch > 512 {
-		ubatch = 512
+	if ubatch > maxUbatch {
+		ubatch = maxUbatch
 	}
 	total += float64(ubatch) * float64(m.Hidden) * 2 * 14
 
@@ -491,9 +502,7 @@ func effectiveTFLOPS(devs []Device, gpuShare, cpuShare float64) float64 {
 		// rather than prefill throughput.
 		gpuT /= float64(n)
 	}
-	// CPU prefill is roughly two orders of magnitude slower; treat the CPU
-	// share as contributing almost nothing rather than pretending it helps.
-	return gpuT*gpuShare + gpuT*cpuShare*0.02
+	return gpuT*gpuShare + gpuT*cpuShare*cpuPrefillShare
 }
 
 func clamp(v, lo, hi int) int {

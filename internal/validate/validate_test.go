@@ -48,7 +48,7 @@ func TestTheOneRealMeasurementIsReproducedByTheModel(t *testing.T) {
 	if err != nil {
 		t.Skipf("no observations file: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	obs, err := Parse(f)
 	if err != nil {
 		t.Fatalf("the shipped observations file does not parse: %v", err)

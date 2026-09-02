@@ -565,7 +565,7 @@ func cmdValidate(path string) {
 		fmt.Fprintln(os.Stderr, "  bench/observations.tsv is the file; see its header for how to add a row.")
 		os.Exit(2)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only: a failed close has nothing to report
 
 	obs, err := validate.Parse(f)
 	if err != nil {

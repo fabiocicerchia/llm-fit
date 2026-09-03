@@ -477,3 +477,219 @@ func TestTightRAMWarnsAboutPageCacheEviction(t *testing.T) {
 		t.Error("64GiB free is not under cache pressure; the warning is noise there")
 	}
 }
+
+// --- multi-GPU parallelism -------------------------------------------------
+
+// twoCards is a pair of identical 24GB/936GB-s cards — the 3090 pair the
+// "does a second card make it faster" question is usually asked about.
+func twoCards() []Device {
+	return []Device{
+		{Name: "A", BytesFree: 24 << 30, BandwidthGBs: 936, TFLOPS: 71},
+		{Name: "B", BytesFree: 24 << 30, BandwidthGBs: 936, TFLOPS: 71},
+	}
+}
+
+func llama8B() arch.Model {
+	return arch.Model{
+		Params: 8030261248, Vocab: 128256, Hidden: 4096,
+		Layers: 32, Heads: 32, KVHeads: 8, MaxCtx: 8192,
+	}
+}
+
+func TestBandwidthsAddUnderTensorParallelAndDoNotUnderLayerSplit(t *testing.T) {
+	devs := twoCards()
+	split, _ := bandwidths(devs, LayerSplit)
+	tp, _ := bandwidths(devs, TensorParallel)
+
+	// Identical cards: a layer split runs one at a time, so the effective rate
+	// is one card's. That is the whole reason a second 3090 buys capacity and
+	// not speed, and it is the fact the old single model hid for vLLM.
+	if math.Abs(split-936) > 0.5 {
+		t.Errorf("layer split = %.1f GB/s, want one card's 936", split)
+	}
+	if math.Abs(tp-1872) > 0.5 {
+		t.Errorf("tensor parallel = %.1f GB/s, want both cards' 1872", tp)
+	}
+}
+
+func TestTensorParallelIsFasterThanLayerSplitOnTwoCards(t *testing.T) {
+	f, _ := quant.ByName("Q4_K_M")
+	base := Plan{Model: llama8B(), Format: f, Ctx: 4096, KVType: "f16", Batch: 1, Devices: twoCards()}
+	e := Engine{Name: "test", MBU: 0.8, MFU: 0.4, MemoryFraction: 0.9, CanOffloadCPU: true}
+
+	split := base
+	split.Parallelism, split.ParallelismSet = LayerSplit, true
+	tp := base
+	tp.Parallelism, tp.ParallelismSet = TensorParallel, true
+
+	sEst, tEst := EstimatePlan(split, e), EstimatePlan(tp, e)
+	if !(tEst.DecodeTPS > sEst.DecodeTPS*1.7) {
+		t.Fatalf("tensor parallel %.1f should be near-double layer split %.1f",
+			tEst.DecodeTPS, sEst.DecodeTPS)
+	}
+	// Each estimate reports what the other strategy would have given, because
+	// the delta is the answer to "is a second card worth it for this runtime".
+	if math.Abs(sEst.AltDecodeTPS-tEst.DecodeTPS)/tEst.DecodeTPS > 0.01 {
+		t.Errorf("alt = %.1f, want the tensor-parallel figure %.1f",
+			sEst.AltDecodeTPS, tEst.DecodeTPS)
+	}
+}
+
+func TestParallelismDefaultsToWhatTheRuntimeActuallyDoes(t *testing.T) {
+	f, _ := quant.ByName("Q4_K_M")
+	p := Plan{Model: llama8B(), Format: f, Ctx: 2048, KVType: "f16", Batch: 1, Devices: twoCards()}
+
+	llamaCpp := Engine{Name: "llama.cpp", MBU: 0.8, MFU: 0.32, MemoryFraction: 0.95, CanOffloadCPU: true}
+	vllm := Engine{Name: "vLLM", MBU: 0.72, MFU: 0.55, MemoryFraction: 0.9,
+		DefaultParallelism: TensorParallel}
+
+	if got := EstimatePlan(p, llamaCpp).Parallelism; got != LayerSplit {
+		t.Errorf("llama.cpp defaulted to %v, want layer-split", got)
+	}
+	if got := EstimatePlan(p, vllm).Parallelism; got != TensorParallel {
+		t.Errorf("vLLM defaulted to %v, want tensor-parallel", got)
+	}
+}
+
+func TestOneCardHasNoParallelismToChooseFrom(t *testing.T) {
+	f, _ := quant.ByName("Q4_K_M")
+	p := Plan{
+		Model: llama8B(), Format: f, Ctx: 2048, KVType: "f16", Batch: 1,
+		Devices:     []Device{{Name: "A", BytesFree: 24 << 30, BandwidthGBs: 936, TFLOPS: 71}},
+		Parallelism: TensorParallel, ParallelismSet: true,
+	}
+	est := EstimatePlan(p, Engine{Name: "vLLM", MBU: 0.72, MFU: 0.55, MemoryFraction: 0.9,
+		DefaultParallelism: TensorParallel})
+	// Reporting a strategy on one card would suggest a choice nobody made.
+	if est.Parallelism != LayerSplit {
+		t.Errorf("single GPU reported %v", est.Parallelism)
+	}
+	if est.AltDecodeTPS != 0 {
+		t.Errorf("single GPU should not report an alternative, got %.1f", est.AltDecodeTPS)
+	}
+}
+
+func TestAllReduceCostGrowsWithCardsAndShrinksWithLink(t *testing.T) {
+	m := llama8B()
+	two := allReduceSecondsPerToken(m, 1, 2, 32)
+	four := allReduceSecondsPerToken(m, 1, 4, 32)
+	nvlink := allReduceSecondsPerToken(m, 1, 2, 300)
+
+	if !(four > two) {
+		t.Errorf("4 cards (%g s) should cost more than 2 (%g s)", four, two)
+	}
+	if !(nvlink < two) {
+		t.Errorf("NVLink (%g s) should cost less than PCIe (%g s)", nvlink, two)
+	}
+	if allReduceSecondsPerToken(m, 1, 1, 32) != 0 {
+		t.Error("one card has nothing to all-reduce")
+	}
+	// Sanity: on two desktop cards over PCIe this is tens of microseconds
+	// against a decode step of tens of milliseconds. The honest answer is that
+	// it is nearly free here, and the model must not inflate it.
+	if two > 1e-3 {
+		t.Errorf("all-reduce = %g s/token, implausibly large for 2 cards over PCIe", two)
+	}
+}
+
+// --- speculative decoding --------------------------------------------------
+
+func TestSpeculativeSpeedupRisesWithAcceptance(t *testing.T) {
+	f, _ := quant.ByName("Q4_K_M")
+	target := llama8B()
+	draft := arch.Model{Params: 1100048384, Vocab: 128256, Hidden: 2048, Layers: 16,
+		Heads: 32, KVHeads: 8, MaxCtx: 8192} // TinyLlama-scale draft
+
+	var last float64
+	for _, a := range []float64{0.3, 0.5, 0.7, 0.9} {
+		_, _, sp := speculativeSpeedup(target, Speculative{Draft: draft, Format: f,
+			Lookahead: 4, AcceptanceRate: a}, f)
+		if sp <= last {
+			t.Errorf("acceptance %.1f gave %.2fx, not more than the previous %.2fx", a, sp, last)
+		}
+		last = sp
+	}
+	if last < 1.5 {
+		t.Errorf("a small draft at 90%% acceptance should be a clear win, got %.2fx", last)
+	}
+}
+
+func TestSpeculativeWithABadlyMatchedDraftIsSlower(t *testing.T) {
+	f, _ := quant.ByName("Q4_K_M")
+	target := llama8B()
+	// A draft nearly as big as the target, rarely accepted: this is the case
+	// that must come out below 1. Reporting every pair as a speedup would be
+	// the tool recommending a configuration that is worse than not using it.
+	heavy := arch.Model{Params: 7000000000, Vocab: 128256, Hidden: 4096, Layers: 30,
+		Heads: 32, KVHeads: 8, MaxCtx: 8192}
+	_, _, sp := speculativeSpeedup(target, Speculative{Draft: heavy, Format: f,
+		Lookahead: 4, AcceptanceRate: 0.3}, f)
+	if sp >= 1 {
+		t.Fatalf("a heavy, rarely-accepted draft gave %.2fx, want a loss", sp)
+	}
+}
+
+func TestSpeculativeAcceptedPerStepIsCappedAtLookaheadPlusOne(t *testing.T) {
+	f, _ := quant.ByName("Q4_K_M")
+	m := llama8B()
+	_, accepted, _ := speculativeSpeedup(m, Speculative{Draft: m, Format: f,
+		Lookahead: 4, AcceptanceRate: 0.999}, f)
+	// At acceptance 1 the target's own token comes free on top of the K
+	// proposals, and no more than that.
+	if accepted > 5.001 || accepted < 4.9 {
+		t.Errorf("accepted per step = %.3f, want ~5 (K+1)", accepted)
+	}
+}
+
+func TestSpeculativeDraftCostsVRAMAndIsReported(t *testing.T) {
+	f, _ := quant.ByName("Q4_K_M")
+	draft := arch.Model{Params: 1100048384, Vocab: 128256, Hidden: 2048, Layers: 16,
+		Heads: 32, KVHeads: 8, MaxCtx: 8192}
+	base := Plan{Model: llama8B(), Format: f, Ctx: 4096, KVType: "f16", Batch: 1,
+		Devices: twoCards()}
+	e := Engine{Name: "vLLM", MBU: 0.72, MFU: 0.55, MemoryFraction: 0.9,
+		DefaultParallelism: TensorParallel}
+
+	plain := EstimatePlan(base, e)
+	spec := base
+	spec.Speculative = &Speculative{Draft: draft, Format: f}
+	withDraft := EstimatePlan(spec, e)
+
+	// Counting the speedup without counting the memory is how this gets
+	// recommended onto a card it no longer fits on.
+	if withDraft.DraftBytes <= 0 {
+		t.Fatal("the draft's VRAM is not being counted")
+	}
+	if withDraft.TotalBytes <= plain.TotalBytes {
+		t.Errorf("total %d did not grow over %d", withDraft.TotalBytes, plain.TotalBytes)
+	}
+	if withDraft.AcceptanceRate != DefaultAcceptanceRate {
+		t.Errorf("acceptance rate = %v, want the documented default", withDraft.AcceptanceRate)
+	}
+	// The assumption has to be stated: the speedup is more sensitive to it than
+	// to anything else in the estimate.
+	if !strings.Contains(strings.Join(withDraft.Reasons, " "), "acceptance rate") {
+		t.Errorf("the assumed acceptance rate is not in the output: %v", withDraft.Reasons)
+	}
+}
+
+func TestSpeculativeDraftFormatDefaultsToTheTargets(t *testing.T) {
+	f, _ := quant.ByName("FP16")
+	draft := arch.Model{Params: 1235814400, Vocab: 128256, Hidden: 2048, Layers: 16,
+		Heads: 32, KVHeads: 8, HeadDim: 64, MaxCtx: 131072}
+	p := Plan{Model: llama8B(), Format: f, Ctx: 8192, KVType: "f16", Batch: 1,
+		Devices:     []Device{{Name: "A", BytesFree: 24 << 30, BandwidthGBs: 936, TFLOPS: 71}},
+		Speculative: &Speculative{Draft: draft}, // no Format named
+	}
+	est := EstimatePlan(p, Engine{Name: "t", MBU: 0.8, MFU: 0.4, MemoryFraction: 0.9})
+
+	// A draft with no format named is stored at the target's. Falling back only
+	// in the speedup maths and not in the accounting dropped ~2.3 GiB of
+	// weights from the total, which is how a plan that does not fit gets
+	// reported as one that does.
+	weights := WeightBytes(draft, f)
+	if est.DraftBytes < weights {
+		t.Fatalf("DraftBytes = %d, missing the draft's %d bytes of weights",
+			est.DraftBytes, weights)
+	}
+}

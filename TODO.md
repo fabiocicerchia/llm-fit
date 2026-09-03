@@ -5,9 +5,10 @@ is the record of what shipped.
 
 - [ ] **Validate the speed estimates against real runs.** Nothing here has been
       checked against a stopwatch; the arithmetic is sound and the constants are
-      from published figures, but the end-to-end numbers are unverified.
+      from published figures, but the end-to-end numbers are unverified. The
+      tensor-parallel and speculative paths raise the stakes: both now claim a
+      multiplier, and neither has been measured.
 - [ ] Read an actual GGUF header, so a specific file is measured rather than a
       format assumed
-- [ ] Speculative decoding and draft-model pairs
-- [ ] Multi-GPU tensor parallelism (currently modelled as layer split, which is
-      right for llama.cpp and pessimistic for vLLM)
+- [ ] A measured acceptance rate per draft/target pair, instead of one assumed
+      default for all of them

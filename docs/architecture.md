@@ -83,7 +83,8 @@ decides whether a model is suggested at all.
 weight and the entire KV cache, once. So tokens per second is bandwidth divided
 by bytes-read-per-token — not FLOPs. It is why a 4090 and an A100 are far
 closer in single-stream chat than their compute suggests, and why a second GPU
-buys capacity rather than speed.
+buys capacity rather than speed *under a layer split* — see below, because that
+last clause is doing more work than it looks.
 
 **Prefill is compute bound.** Ingesting a prompt is a matrix-matrix product over
 many tokens at once, so it scales with FLOPs. A card can be slow to chat and
@@ -104,6 +105,55 @@ against itself — see `internal/fit/fit_test.go`, which asserts predictions lan
 within 3% of real releases for Llama-2, Llama-3 and Mistral across seven
 quantizations.
 
+### Multi-GPU: the two strategies are different arithmetic
+
+"A second GPU buys capacity rather than speed" is true of a **layer split** and
+false of **tensor parallelism**, and modelling only the first made vLLM look
+worse than it is.
+
+| | Layer split | Tensor parallel |
+|---|---|---|
+| Who | llama.cpp, Ollama | vLLM, SGLang, ExLlamaV2, TensorRT-LLM |
+| Where the weights go | whole layers per card | every matrix sharded across all cards |
+| Effective bandwidth | **harmonic** mean — one card at a time, so for identical cards it is one card's | **sum** — all cards read their shard at once |
+| Prefill FLOPs | one card's | all cards' |
+| Interconnect | nothing crosses it per token | an all-reduce per layer per token |
+
+Two identical 3090s therefore decode at ~936 GB/s under llama.cpp and ~1872
+GB/s under vLLM, and that is the difference the estimate now shows. `-parallel`
+overrides it; the default is what the chosen runtime actually does.
+
+The all-reduce is modelled as a ring: `2(N-1)/N × hidden × 2 bytes × batch` per
+layer per token, over `-interconnect` (default 32 GB/s, one direction of PCIe
+4.0 x16). On two desktop cards at batch 1 that is tens of microseconds against
+a decode step of tens of milliseconds — **nearly free, and the model says so
+rather than inflating it**. It stops being free as the card count and the batch
+grow, which is when people notice, so the estimate warns when the interconnect
+comes within 4× of being the limit.
+
+### Speculative decoding is a trade, not a speedup
+
+A draft model proposes `K` tokens, the target verifies all `K` in one forward
+pass, and everything up to the first rejection is kept. With acceptance
+probability `a` the expected yield per step is the geometric sum
+`(1 − a^(K+1)) / (1 − a)`, capped at `K+1` — the target's own token is free when
+every proposal is accepted.
+
+Both passes are bandwidth-bound, so their relative cost is just the ratio of
+weights read, and the multiplier is `E[accepted] / (1 + K·r)`. **It goes below
+1** when the draft is large or rarely accepted, and reporting that is the point:
+a badly matched pair is slower than not using it at all.
+
+The draft is resident for the whole run, so its weights *and its own KV cache*
+are added to the memory total. Counting the speedup without counting the memory
+is how speculative decoding gets recommended onto a card it no longer fits on.
+
+The default acceptance rate is **0.7**, the middle of the 0.6–0.8 range
+Leviathan et al. (2023), *Fast Inference from Transformers via Speculative
+Decoding*, measure for a draft from the same family as its target. It is printed
+in the output rather than buried, because the answer is more sensitive to it
+than to anything else in the estimate — override with `-acceptance`.
+
 ## Runtimes
 
 llama.cpp, Ollama, vLLM, SGLang, ExLlamaV2, MLX, TensorRT-LLM. The differences
@@ -120,14 +170,53 @@ that change the answer are modelled, not just listed:
 
 ## What the numbers are, and are not
 
-Estimates from bandwidth and compute, not measurements. On hardware in the
-built-in table they are usually within about 20% — the right ballpark for
-choosing, not a benchmark. Three things push them off:
+Estimates from bandwidth and compute, not measurements.
+
+**The accuracy band is unknown, and this document used to claim otherwise.** It
+said "usually within about 20%", which was an assertion about arithmetic rather
+than a result: exactly ONE end-to-end number here has ever been held up against
+a stopwatch. On that one — Qwen3-30B-A3B at Q4_K_M, 26 of 48 layers on an RTX
+3060 — the tool predicts 2.8 tok/s against a measured 2.4, and the measured
+figure is explicitly a floor because the machine was still swapping. One point
+cannot distinguish a systematic bias from a machine having a bad afternoon.
+
+`llm-fit validate` is how that stops being true. It reads
+`bench/observations.tsv` — one row per measured run, with the machine and the
+settings written down beside the number — and prints predicted against
+measured, per row and as a geometric mean:
+
+```console
+$ llm-fit validate
+model                  quant    engine     predicted  measured    ratio
+------------------------------------------------------------------------
+Qwen/Qwen3-30B-A3B     q4_k_m   llama.cpp        2.8       2.4    1.18x
+
+1 observation(s) compared
+geometric mean ratio  1.18x  (>1 means the tool is optimistic)
+
+NOT AN ACCURACY BAND. 1 observation(s) cannot separate a systematic
+bias from one machine that was swapping...
+```
+
+It refuses to state a band below three observations, and says so rather than
+quoting a figure — the false precision the old sentence had. The mean is
+geometric because these are ratios: a 2x overestimate and a 2x underestimate
+have to cancel, and an arithmetic mean reports them as a 25% optimistic bias
+that is not there. Above three, a mean ratio over 1.3 is called out as a
+**systematic overestimate**, which is the direction that matters: an
+overestimate ranks a model first on a machine where it is unusable, while an
+underestimate merely hides one that would have worked.
+
+Adding a row is a stopwatch and four numbers from `llm-fit detect`. Two more
+runs on different hardware and the band above stops being a blank.
+
+Three things push the estimates off:
 
 - A GPU not in the spec table has no known bandwidth. It is flagged, and the
   speed figures that follow are guesses.
-- Speculative decoding, prefix caching and batch-of-one assumptions all move
-  real throughput.
+- Prefix caching and batch-of-one assumptions move real throughput. Speculative
+  decoding is now modelled (`-draft`), but on an assumed acceptance rate rather
+  than a measured one, and the acceptance rate is the whole answer.
 - **An MoE with experts on the CPU is the one case measured against a stopwatch,
   and it needed its own constant.** Scaling bytes by the active fraction is
   right on the GPU and wrong on the CPU, where each layer re-gathers its experts

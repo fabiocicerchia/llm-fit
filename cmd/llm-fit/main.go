@@ -12,9 +12,11 @@ import (
 	"strings"
 
 	"github.com/fabiocicerchia/llm-fit/internal/advisor"
+	"github.com/fabiocicerchia/llm-fit/internal/catalog"
 	"github.com/fabiocicerchia/llm-fit/internal/fit"
 	"github.com/fabiocicerchia/llm-fit/internal/hw"
 	"github.com/fabiocicerchia/llm-fit/internal/quant"
+	"github.com/fabiocicerchia/llm-fit/internal/validate"
 )
 
 const usage = `llm-fit — which LLMs this machine can run, and how fast
@@ -25,6 +27,8 @@ const usage = `llm-fit — which LLMs this machine can run, and how fast
   llm-fit check <file.gguf>      read the shape and quant from a local GGUF file
   llm-fit engines                runtime support matrix for this machine
   llm-fit models                 the built-in catalogue
+  llm-fit validate [FILE]        compare the tool's own estimates against
+                                 measured runs (default bench/observations.tsv)
 
 Flags
   -ctx N              context length to plan for (default 8192)
@@ -43,6 +47,20 @@ Flags
   -vram GiB           override VRAM only, keeping the detected bandwidth
   -ram GiB            override detected system RAM
   -ram-bandwidth GBs  override system RAM bandwidth
+
+  -parallel tensor|layer  how to spread across several GPUs. Default is what
+                      the chosen runtime actually does: llama.cpp splits
+                      layers (extra cards buy capacity), vLLM/SGLang/
+                      ExLlamaV2/TensorRT-LLM shard tensors (extra cards buy
+                      speed). Ignored with one GPU.
+  -interconnect GBs   GPU link bandwidth for tensor parallelism (default 32,
+                      one direction of PCIe 4.0 x16; NVLink is ~300+)
+
+  -draft MODEL        pair a speculative draft model with the target
+  -lookahead N        tokens the draft proposes per verification step (4)
+  -acceptance R       assumed acceptance rate 0-1 (0.7); reported in the
+                      output, because the speedup depends on it more than on
+                      anything else
 
 Speed figures are estimates from memory bandwidth and compute, not measurements.
 They are usually within about 20% on hardware in the built-in table; treat them
@@ -70,6 +88,11 @@ func main() {
 	vramOverride := fs.Float64("vram", 0, "")
 	ramOverride := fs.Float64("ram", 0, "")
 	ramBW := fs.Float64("ram-bandwidth", 0, "")
+	parallel := fs.String("parallel", "", "")
+	link := fs.Float64("interconnect", 0, "")
+	draftName := fs.String("draft", "", "")
+	lookahead := fs.Int("lookahead", 0, "")
+	acceptance := fs.Float64("acceptance", 0, "")
 	fs.Usage = func() { fmt.Print(usage) }
 
 	cmd := os.Args[1]
@@ -90,11 +113,33 @@ func main() {
 
 	req := advisor.Request{
 		Ctx: *ctx, KVType: *kv, Batch: *batch, Serving: *serving,
-		MinVerdict: parseVerdict(*minLevel),
-		MinQuality: *minQuality,
+		MinVerdict:      parseVerdict(*minLevel),
+		MinQuality:      *minQuality,
+		InterconnectGBs: *link,
 	}
 	if *engineName != "" {
 		req.Engines = []string{*engineName}
+	}
+	switch *parallel {
+	case "":
+		// Left unset on purpose: each engine's own default is the honest answer.
+	case "tp", "tensor", "tensor-parallel":
+		req.Parallelism, req.ParallelismSet = fit.TensorParallel, true
+	case "layer", "layer-split", "ls":
+		req.Parallelism, req.ParallelismSet = fit.LayerSplit, true
+	default:
+		fmt.Fprintf(os.Stderr, "unknown -parallel %q: use tensor or layer\n", *parallel)
+		os.Exit(2)
+	}
+	if *draftName != "" {
+		d, ok := catalog.Find(*draftName)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown draft model %q — see `llm-fit list`\n", *draftName)
+			os.Exit(2)
+		}
+		req.Draft = &fit.Speculative{
+			Draft: d, Lookahead: *lookahead, AcceptanceRate: *acceptance,
+		}
 	}
 
 	switch cmd {
@@ -112,6 +157,12 @@ func main() {
 		cmdEngines(machine)
 	case "models":
 		cmdModels(*asJSON)
+	case "validate":
+		path := "bench/observations.tsv"
+		if len(positional) > 0 {
+			path = positional[0]
+		}
+		cmdValidate(path)
 	default:
 		fmt.Print(usage)
 		os.Exit(exitUsage)
@@ -199,4 +250,30 @@ func parseVerdict(s string) fit.Verdict {
 func isFile(query string) bool {
 	st, err := os.Stat(query)
 	return err == nil && st.Mode().IsRegular()
+}
+
+// cmdValidate compares the tool's own estimates against measured runs.
+//
+// The arithmetic is documented and the constants come from published figures,
+// and exactly ONE end-to-end number has ever been checked against a stopwatch.
+// This does not produce measurements — nothing runs a model here — it turns a
+// file of them into the table that answers the question, and says plainly when
+// there are too few rows for the answer to mean anything.
+func cmdValidate(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "llm-fit: %v\n", err)
+		fmt.Fprintln(os.Stderr, "  bench/observations.tsv is the file; see its header for how to add a row.")
+		os.Exit(2)
+	}
+	defer func() { _ = f.Close() }() // read-only: a failed close has nothing to report
+
+	obs, err := validate.Parse(f)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "llm-fit: %s: %v\n", path, err)
+		os.Exit(2)
+	}
+	s := validate.Compare(obs)
+	fmt.Print(s.Text())
+	fmt.Printf("\naccuracy band for the docs: %s\n", s.Band())
 }

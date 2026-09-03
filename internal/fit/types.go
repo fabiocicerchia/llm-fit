@@ -24,6 +24,64 @@ type Device struct {
 	IsCPU  bool
 }
 
+// Parallelism is how a model is spread across more than one GPU. The two
+// strategies have different arithmetic, and modelling only the first made vLLM
+// look worse than it is.
+type Parallelism int
+
+const (
+	// LayerSplit puts whole layers on each card. One card works at a time, so
+	// the cards' bandwidths combine harmonically — for identical cards that is
+	// one card's bandwidth, which is why a second 3090 buys capacity, not speed.
+	// This is what llama.cpp does.
+	LayerSplit Parallelism = iota
+	// TensorParallel shards every layer's weight matrices across the cards, so
+	// all of them read and compute at once and the bandwidths *sum*. The cost is
+	// an all-reduce of the activations at each layer, which the interconnect has
+	// to carry. This is what vLLM, TensorRT-LLM and ExLlamaV2 do.
+	TensorParallel
+)
+
+func (p Parallelism) String() string {
+	if p == TensorParallel {
+		return "tensor-parallel"
+	}
+	return "layer-split"
+}
+
+// DefaultInterconnectGBs is one direction of PCIe 4.0 x16, the interconnect most
+// multi-GPU desktops actually have. NVLink is an order of magnitude faster
+// (~300 GB/s on a bridged 3090 pair, ~900 on an H100), so a plan that has it
+// should say so rather than inherit this floor.
+const DefaultInterconnectGBs = 32.0
+
+// Speculative is a draft model paired with the target it speeds up.
+//
+// The draft proposes Lookahead tokens, the target verifies all of them in one
+// forward pass, and every token up to the first rejection is kept. It is a
+// throughput trade, not a free one: the draft's weights occupy VRAM the target
+// could have used, and a draft that is rarely accepted costs more than it saves.
+type Speculative struct {
+	Draft  arch.Model
+	Format quant.Format
+	// Lookahead is how many tokens the draft proposes per verification step.
+	Lookahead int
+	// AcceptanceRate is the probability the target accepts a proposed token.
+	// Zero means DefaultAcceptanceRate.
+	AcceptanceRate float64
+}
+
+// DefaultAcceptanceRate is the middle of the range Leviathan et al. (2023),
+// "Fast Inference from Transformers via Speculative Decoding", measure for a
+// draft drawn from the same family as its target — roughly 0.6-0.8 depending on
+// the pair and the sampling temperature. It is reported in the output rather
+// than buried, because the speedup is far more sensitive to it than to anything
+// else here.
+const DefaultAcceptanceRate = 0.7
+
+// DefaultLookahead is the draft depth vLLM and llama.cpp both default to.
+const DefaultLookahead = 4
+
 // Plan is a proposed way to run one model: which quantization, how much
 // context, and how the layers are split across devices.
 type Plan struct {
@@ -34,6 +92,18 @@ type Plan struct {
 	Batch   int
 	Engine  string
 	Devices []Device
+
+	// Parallelism across the GPUs. The zero value is LayerSplit; EstimatePlan
+	// substitutes the engine's own default when ParallelismSet is false, so a
+	// caller that says nothing gets the strategy the runtime would actually use.
+	Parallelism    Parallelism
+	ParallelismSet bool
+	// InterconnectGBs is the per-GPU link bandwidth tensor parallelism has to
+	// push activations over. Zero means DefaultInterconnectGBs.
+	InterconnectGBs float64
+
+	// Speculative, when set, pairs a draft model with this target.
+	Speculative *Speculative
 }
 
 // Estimate is what the tool reports for one plan.
@@ -61,6 +131,20 @@ type Estimate struct {
 	// Concurrency is how many simultaneous requests of this context length the
 	// leftover memory can hold. Only meaningful for serving engines.
 	Concurrency int
+
+	// Parallelism actually used, and what the other strategy would have given.
+	// The delta is the point: it is the difference between "a second card buys
+	// capacity" and "a second card buys speed", and which one is true depends
+	// entirely on the runtime.
+	Parallelism     Parallelism
+	AltDecodeTPS    float64
+	InterconnectTPS float64 // decode ceiling the interconnect alone imposes
+	// DraftBytes is the extra VRAM a speculative pair costs, and Speedup /
+	// AcceptanceRate are what it buys. Zero when no draft is configured.
+	DraftBytes      int64
+	Speedup         float64
+	AcceptanceRate  float64
+	AcceptedPerStep float64
 
 	Verdict Verdict
 	Reasons []string
@@ -122,4 +206,9 @@ type Engine struct {
 	// MemoryFraction is how much of the card the engine will use. vLLM
 	// preallocates 90% by default and hands the rest back to nobody.
 	MemoryFraction float64
+	// DefaultParallelism is the strategy this runtime uses across several GPUs
+	// when the caller does not say. llama.cpp splits layers; vLLM and
+	// ExLlamaV2 shard tensors, and modelling them as layer-split made them look
+	// slower than they are.
+	DefaultParallelism Parallelism
 }

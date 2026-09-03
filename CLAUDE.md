@@ -18,6 +18,7 @@ make test         # run tests
 make lint         # vet and formatting check
 make tidy         # tidy modules
 make demo         # what this machine can run
+make validate     # predicted vs measured tok/s, from bench/observations.tsv
 make clean        # remove build artifacts
 ```
 
@@ -45,6 +46,10 @@ make clean        # remove build artifacts
 - Prefer the standard library; a new module needs a reason.
 - The arithmetic is the product: every estimate needs its formula documented and
   a test with real hardware figures.
+- A change to an efficiency constant has to keep `llm-fit validate` reproducing
+  `bench/observations.tsv`. That file is the only place in this repo where a
+  stopwatch has been held against the arithmetic; a row is a measured run or it
+  is not a row, and nothing in it is estimated or interpolated.
 - Hardware detection must degrade gracefully — an unknown GPU reports unknown,
   it does not guess.
 - `make demo` must work with no network and no API token.

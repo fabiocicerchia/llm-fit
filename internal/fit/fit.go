@@ -20,6 +20,7 @@
 package fit
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 )
@@ -45,8 +46,35 @@ func EstimatePlan(p Plan, e Engine) Estimate {
 	var est Estimate
 	m := p.Model
 
+	// A caller that says nothing gets the strategy the runtime would really
+	// use, rather than whichever one happens to be the zero value.
+	par := p.Parallelism
+	if !p.ParallelismSet {
+		par = e.DefaultParallelism
+	}
+	if gpuCount(p.Devices) < 2 {
+		// With one card the distinction does not exist, and reporting a
+		// strategy would suggest a choice that was never made.
+		par = LayerSplit
+	}
+	est.Parallelism = par
+
 	est.WeightBytes = WeightBytes(m, p.Format)
 	est.KVBytes = KVBytes(m, p.Ctx, p.Batch, p.KVType)
+
+	// A draft model is resident for the whole run: its weights and its own KV
+	// cache come out of the same VRAM the target wanted. Counting the speedup
+	// without counting the memory is how speculative decoding gets recommended
+	// onto a card it no longer fits on.
+	if p.Speculative != nil {
+		d := *p.Speculative
+		df := draftFormat(d, p.Format)
+		dw := WeightBytes(d.Draft, df)
+		dkv := KVBytes(d.Draft, p.Ctx, p.Batch, p.KVType)
+		est.DraftBytes = dw + dkv
+		est.WeightBytes += dw
+		est.KVBytes += dkv
+	}
 
 	gpuTotal, cpuTotal := splitCapacity(p.Devices, e.MemoryFraction)
 
@@ -95,7 +123,29 @@ func EstimatePlan(p Plan, e Engine) Estimate {
 	gpuShare := float64(layersFit) / math.Max(float64(m.Layers), 1)
 	cpuShare := 1 - gpuShare
 	est.DecodeTPS = decodeTPS(p, e, est, gpuShare, cpuShare)
-	est.PrefillTPS = prefillTPS(p, e, gpuShare, cpuShare)
+	est.PrefillTPS = prefillTPS(p, e, gpuShare, cpuShare, par)
+	if par == TensorParallel {
+		if reduce := allReduceSecondsPerToken(
+			m, p.Batch, gpuCount(p.Devices), interconnect(p)); reduce > 0 {
+			est.InterconnectTPS = 1 / reduce
+		}
+	}
+
+	// What the other strategy would have given, so the delta is visible rather
+	// than implied. This is the number that says whether a second card is worth
+	// buying for *this* runtime.
+	if gpuCount(p.Devices) > 1 {
+		est.AltDecodeTPS = altDecodeTPS(p, e, est, gpuShare, cpuShare)
+	}
+
+	// Speculative decoding multiplies the decode rate, so it is applied to the
+	// bandwidth-bound figure above rather than replacing it.
+	if p.Speculative != nil {
+		est.AcceptanceRate, est.AcceptedPerStep, est.Speedup = speculativeSpeedup(
+			m, *p.Speculative, p.Format)
+		est.DecodeTPS *= est.Speedup
+		est.AltDecodeTPS *= est.Speedup
+	}
 
 	// Report the context the cache can reach in the memory the weights actually
 	// occupy. A GPU-resident model could nominally cache far more by spilling
@@ -142,10 +192,53 @@ func explain(est Estimate, p Plan, e Engine, cpuLayers int, cpuTotal int64) []st
 	if est.FullyOnGPU && est.Verdict >= Good {
 		out = append(out, "entirely in VRAM")
 	}
+	if n := gpuCount(p.Devices); n > 1 && est.AltDecodeTPS > 0 {
+		alt := LayerSplit
+		if est.Parallelism == LayerSplit {
+			alt = TensorParallel
+		}
+		out = append(out, fmt.Sprintf(
+			"%d GPUs, %s (%s default): ~%.0f tok/s here, ~%.0f under %s",
+			n, est.Parallelism, e.Name, est.DecodeTPS, est.AltDecodeTPS, alt))
+		// The thing people actually want to know before buying a second card.
+		if est.Parallelism == LayerSplit && est.AltDecodeTPS > est.DecodeTPS*1.2 {
+			out = append(out, "a layer split makes extra cards buy capacity, not speed — a tensor-parallel runtime would be faster on this hardware")
+		}
+		if est.Parallelism == TensorParallel && est.InterconnectTPS > 0 &&
+			est.InterconnectTPS < est.DecodeTPS*4 {
+			out = append(out, fmt.Sprintf(
+				"the interconnect is close to being the limit here (~%.0f tok/s of all-reduce alone at %.0f GB/s) — NVLink would move it",
+				est.InterconnectTPS, interconnect(p)))
+		}
+	}
+	if p.Speculative != nil {
+		verb := "gains"
+		if est.Speedup < 1 {
+			verb = "LOSES"
+		}
+		out = append(out, fmt.Sprintf(
+			"speculative decoding %s %.2fx at an assumed %.0f%% acceptance rate (%.1f tokens per verify step); the draft also costs %s of VRAM",
+			verb, est.Speedup, est.AcceptanceRate*100, est.AcceptedPerStep, humanBytes(est.DraftBytes)))
+		if est.Speedup < 1 {
+			out = append(out, "the draft is too expensive or too rarely accepted to pay for itself — try a smaller draft, or drop it")
+		}
+	}
 	return out
 }
 
 // layerClause names the offloaded layers in a sentence, singular or plural.
+// humanBytes renders a byte count the way the reasons read it.
+func humanBytes(b int64) string {
+	switch {
+	case b >= int64(GiB):
+		return fmt.Sprintf("%.1f GiB", float64(b)/GiB)
+	case b >= int64(MiB):
+		return fmt.Sprintf("%.0f MiB", float64(b)/MiB)
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
+}
+
 func layerClause(n int) string {
 	if n == 1 {
 		return "1 layer is"

@@ -7,7 +7,7 @@ Guidance for Claude Code (and other AI agents) working in this repo.
 **Which LLMs this machine can actually run, and how fast.** Reads the
 hardware, does the memory and bandwidth arithmetic, and recommends a model, a
 quantization and a runtime — with an estimated tokens/sec. Go, `cmd/` +
-`internal/{catalog,engine,fit,hfapi,hw,quant}`.
+`internal/{advisor,arch,catalog,engine,fit,gguf,hfapi,hw,quant}`.
 
 ## Commands
 

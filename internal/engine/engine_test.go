@@ -16,8 +16,8 @@ func TestComputeCapabilityIsPrintedExactly(t *testing.T) {
 		8.6: "8.6", 8.9: "8.9", 7.5: "7.5", 12.0: "12", 9.0: "9", 6.1: "6.1",
 	}
 	for in, want := range cases {
-		if got := trim(in); got != want {
-			t.Errorf("trim(%v) = %q, want %q", in, got, want)
+		if got := formatCapability(in); got != want {
+			t.Errorf("formatCapability(%v) = %q, want %q", in, got, want)
 		}
 	}
 }

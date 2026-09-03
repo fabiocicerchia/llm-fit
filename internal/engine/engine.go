@@ -178,7 +178,7 @@ func (e Engine) RunsOn(m hw.Machine) (bool, string) {
 		return false, e.Name + " needs " + vendorList(e.Vendors) + "; this machine has none"
 	}
 	if best == hw.NVIDIA && e.MinComputeCapability > 0 && cc > 0 && cc < e.MinComputeCapability {
-		return false, e.Name + " needs compute capability " + trim(e.MinComputeCapability) + " or newer; this GPU is " + trim(cc)
+		return false, e.Name + " needs compute capability " + formatCapability(e.MinComputeCapability) + " or newer; this GPU is " + formatCapability(cc)
 	}
 	return true, ""
 }
@@ -195,6 +195,6 @@ func vendorList(vs []hw.Vendor) string {
 // 9.0 becomes "9". The shortest representation that round-trips is what a
 // version-like number wants — truncating to one decimal by hand turned 8.6
 // into "8.5", because 8.6-8 is 0.5999999999999996 in binary floating point.
-func trim(f float64) string {
+func formatCapability(f float64) string {
 	return strconv.FormatFloat(f, 'f', -1, 64)
 }

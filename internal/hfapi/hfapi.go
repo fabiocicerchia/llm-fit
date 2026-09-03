@@ -20,7 +20,18 @@ import (
 	"github.com/fabiocicerchia/llm-fit/internal/arch"
 )
 
-const base = "https://huggingface.co"
+const (
+	base = "https://huggingface.co"
+
+	// requestTimeout bounds one metadata fetch. These are kilobyte files.
+	requestTimeout = 20 * time.Second
+	// maxResponseBytes caps what an unexpected response can make us buffer; a
+	// config.json is a few kilobytes and an index a few hundred.
+	maxResponseBytes = 4 << 20
+	// defaultMaxCtx stands in when a repo omits max_position_embeddings, which
+	// predates the key. Low enough to be a floor rather than a claim.
+	defaultMaxCtx = 4096
+)
 
 type config struct {
 	Architectures     []string `json:"architectures"`
@@ -65,10 +76,7 @@ func ValidateID(id string) error {
 			return fmt.Errorf("%q is not a Hugging Face repo id (empty or relative path segment)", id)
 		}
 		for _, r := range part {
-			switch {
-			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			case r == '-', r == '_', r == '.':
-			default:
+			if !legalIDRune(r) {
 				return fmt.Errorf("%q is not a Hugging Face repo id (illegal character %q)", id, r)
 			}
 		}
@@ -76,16 +84,58 @@ func ValidateID(id string) error {
 	return nil
 }
 
+// legalIDRune is the allowlist a repo id segment is held to.
+func legalIDRune(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	case r == '-', r == '_', r == '.':
+		return true
+	}
+	return false
+}
+
 // Fetch builds a Model from a Hugging Face repo id such as "Qwen/Qwen3-8B".
 func Fetch(id string) (arch.Model, error) {
+	return fetch(&http.Client{Timeout: requestTimeout}, id)
+}
+
+// fetch is Fetch with the HTTP client supplied, so the tests can point one at a
+// server of their own instead of huggingface.co. base stays a constant: the id
+// allowlist is only worth anything if the host it is pasted into cannot move.
+func fetch(client *http.Client, id string) (arch.Model, error) {
 	if err := ValidateID(id); err != nil {
 		return arch.Model{}, err
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
 
+	cfg, err := fetchConfig(client, id)
+	if err != nil {
+		return arch.Model{}, err
+	}
+
+	m := modelFromConfig(id, cfg)
+
+	// The parameter count is not in config.json. The safetensors index records
+	// the total byte size, which divided by the dtype width gives it.
+	var idx safetensorsIndex
+	if err := getJSON(client, id, "model.safetensors.index.json", &idx); err == nil && idx.Metadata.TotalSize > 0 {
+		m.Params = idx.Metadata.TotalSize / 2 // bf16/fp16 checkpoints
+	} else {
+		m.Params = estimateParams(m)
+	}
+
+	if m.IsMoE() && m.ExpertsActive > 0 && m.Experts > 0 {
+		m.ActiveParams = activeParams(m)
+	}
+	return m, nil
+}
+
+// fetchConfig reads config.json and returns the block of it that describes the
+// model that generates tokens, refusing a repo whose config cannot describe one.
+func fetchConfig(client *http.Client, id string) (config, error) {
 	var cfg config
 	if err := getJSON(client, id, "config.json", &cfg); err != nil {
-		return arch.Model{}, err
+		return config{}, err
 	}
 	// Multimodal repos put the language model one level down; the vision tower
 	// is not what generates tokens, so its shape is not what we plan against.
@@ -95,9 +145,15 @@ func Fetch(id string) (arch.Model, error) {
 		cfg = inner
 	}
 	if cfg.NumHiddenLayers == 0 || cfg.HiddenSize == 0 {
-		return arch.Model{}, fmt.Errorf("%s: config.json has no usable architecture (is it a GGUF-only or adapter repo?)", id)
+		return config{}, fmt.Errorf("%s: config.json has no usable architecture (is it a GGUF-only or adapter repo?)", id)
 	}
+	return cfg, nil
+}
 
+// modelFromConfig maps config.json onto the shape the maths works in, filling
+// in the keys that older repos predate rather than leaving a zero for something
+// downstream to divide by.
+func modelFromConfig(id string, cfg config) arch.Model {
 	m := arch.Model{
 		ID: id, Name: id, Family: cfg.ModelType,
 		Layers: cfg.NumHiddenLayers, Hidden: cfg.HiddenSize,
@@ -110,7 +166,7 @@ func Fetch(id string) (arch.Model, error) {
 		m.KVHeads = m.Heads // no GQA stated means one KV head per query head
 	}
 	if m.MaxCtx == 0 {
-		m.MaxCtx = 4096
+		m.MaxCtx = defaultMaxCtx
 	}
 	m.Experts = cfg.NumLocalExperts
 	if m.Experts == 0 {
@@ -121,29 +177,18 @@ func Fetch(id string) (arch.Model, error) {
 		m.KVLoraRank = cfg.KVLoraRank
 		m.QKRopeHeadDim = cfg.QKRopeHeadDim
 	}
-
-	// The parameter count is not in config.json. The safetensors index records
-	// the total byte size, which divided by the dtype width gives it.
-	var idx safetensorsIndex
-	if err := getJSON(client, id, "model.safetensors.index.json", &idx); err == nil && idx.Metadata.TotalSize > 0 {
-		m.Params = idx.Metadata.TotalSize / 2 // bf16/fp16 checkpoints
-	} else {
-		m.Params = estimateParams(m, cfg)
-	}
-
-	if m.IsMoE() && m.ExpertsActive > 0 && m.Experts > 0 {
-		// Only the routed experts scale down; attention and embeddings are read
-		// every token regardless.
-		m.ActiveParams = activeParams(m)
-	}
-	return m, nil
+	return m
 }
 
-// estimateParams reconstructs the count from the shape when the index is
-// missing, which happens on single-file and older repos.
-func estimateParams(m arch.Model, cfg config) int64 {
+// paramCount is the parameter count the shape implies, with ffnCopies
+// feed-forward blocks per layer.
+//
+// Total and active differ only in that number — every expert versus the few
+// routed per token — and they have to be computed the same way or the active
+// fraction the speed estimate divides by is nonsense rather than merely
+// approximate. Hence one formula with a knob, not two copies.
+func paramCount(m arch.Model, ffnCopies int64) int64 {
 	h := int64(m.Hidden)
-	l := int64(m.Layers)
 	kvRatio := float64(m.KVHeads) / float64(max(m.Heads, 1))
 
 	// Attention: Q is hidden², K and V scale with the KV head ratio, O is hidden².
@@ -151,28 +196,27 @@ func estimateParams(m arch.Model, cfg config) int64 {
 	// Feed-forward is typically 8/3·hidden per layer across three projections
 	// in a gated architecture.
 	ffn := int64(8 * h * h)
-	perLayer := attn + ffn
-	if m.Experts > 1 {
-		perLayer = attn + ffn*int64(m.Experts)
-	}
 	embed := int64(m.Vocab) * h
 	if !m.TiedEmbeddings {
 		embed *= 2
 	}
-	return perLayer*l + embed
+	return (attn+ffn*ffnCopies)*int64(m.Layers) + embed
 }
 
-func activeParams(m arch.Model) int64 {
-	h := int64(m.Hidden)
-	l := int64(m.Layers)
-	kvRatio := float64(m.KVHeads) / float64(max(m.Heads, 1))
-	attn := int64(float64(h*h) * (2 + 2*kvRatio))
-	ffnOne := int64(8 * h * h)
-	embed := int64(m.Vocab) * h
-	if !m.TiedEmbeddings {
-		embed *= 2
+// estimateParams reconstructs the count from the shape when the index is
+// missing, which happens on single-file and older repos.
+func estimateParams(m arch.Model) int64 {
+	copies := int64(1)
+	if m.Experts > 1 {
+		copies = int64(m.Experts)
 	}
-	return (attn+ffnOne*int64(m.ExpertsActive))*l + embed
+	return paramCount(m, copies)
+}
+
+// activeParams counts only the experts a token routes to; attention and
+// embeddings are read every token regardless.
+func activeParams(m arch.Model) int64 {
+	return paramCount(m, int64(m.ExpertsActive))
 }
 
 func getJSON(c *http.Client, id, file string, v any) error {
@@ -202,7 +246,7 @@ func getJSON(c *http.Client, id, file string, v any) error {
 		return fmt.Errorf("%s: %s", id, resp.Status)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return err
 	}

@@ -17,11 +17,12 @@ hw ──► advisor ──► fit ──► Estimate
 |---|---|
 | `internal/arch` | A model's shape. GQA/MLA/MoE are distinct cases, not scaling factors. |
 | `internal/quant` | Bits per weight per format, calibrated against published GGUF file sizes. |
-| `internal/hw` | Detection: `nvidia-smi`, `rocm-smi`, `sysctl`, `/proc`, plus the GPU spec table and the memory-bandwidth measurement. |
+| `internal/hw` | Detection: `nvidia-smi`, `rocm-smi`, `sysctl`, `/proc`, plus the GPU spec table (`gpus.json`) and the memory-bandwidth measurement. |
 | `internal/engine` | What each runtime can load and where it can run. |
 | `internal/fit` | The arithmetic. Pure. Memory, KV cache, decode and prefill speed. |
 | `internal/catalog` | The embedded model list. |
 | `internal/hfapi` | Reads any model's shape from Hugging Face. |
+| `internal/gguf` | Reads the header and tensor directory of a GGUF file on disk. |
 | `internal/advisor` | Search and ranking — the tool's opinion. |
 
 ## Why the split matters
@@ -39,7 +40,8 @@ they can be argued with and changed without touching the arithmetic.
 ## Two things that look like details and are not
 
 **Bandwidth is looked up, not reported.** No driver exposes memory bandwidth, so
-`internal/hw/gpudb.go` is a table matched by substring, longest match first.
+`internal/hw/gpus.json` is a table matched by substring, longest match first;
+`gpudb.go` embeds it, rejects a row missing a divisor, and does the matching.
 `nvidia-smi` says "NVIDIA GeForce RTX 4070 Ti SUPER"; matching the shorter "RTX
 4070 Ti" row gives a card with a third less bandwidth and a decode estimate to
 match.
@@ -60,8 +62,10 @@ add a case to `TestWeightBytesMatchesPublishedGGUFSizes` with a real file size.
 **A runtime**: an entry in `internal/engine`. The constraints — which formats,
 which vendors, whether it offloads to CPU — are what change the answer.
 
-**A GPU**: a row in `internal/hw/gpudb.go`. Bandwidth is the number that
-matters; TFLOPS only affects prefill.
+**A GPU**: a row in `internal/hw/gpus.json`. Bandwidth is the number that
+matters; TFLOPS only affects prefill. `vram_gib`, `bandwidth_gbs` and `vendor`
+are required — the loader panics at startup rather than let a missing key
+become a zero the speed estimate divides by.
 
 ## Fitting is the easy half
 
@@ -218,7 +222,7 @@ Three things push the estimates off:
   right on the GPU and wrong on the CPU, where each layer re-gathers its experts
   every token. Under a single shared efficiency factor, Qwen3-30B-A3B on a 12GB
   card predicted 19 tok/s and delivered 2.4 — enough to rank it the best option
-  on a machine it is unusable on. `cpuGatherEfficiency` in `internal/fit/fit.go`
+  on a machine it is unusable on. `cpuGatherEfficiency` in `internal/fit/speed.go`
   now separates the two, but it is fitted to one machine. Treat MoE offload
   figures as the least trustworthy numbers here until there are more.
 - The quality ranking (`Score`) is a judgement, not a measurement. It encodes

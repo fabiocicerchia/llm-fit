@@ -603,7 +603,7 @@ func TestSpeculativeSpeedupRisesWithAcceptance(t *testing.T) {
 	var last float64
 	for _, a := range []float64{0.3, 0.5, 0.7, 0.9} {
 		_, _, sp := speculativeSpeedup(target, Speculative{Draft: draft, Format: f,
-			Lookahead: 4, AcceptanceRate: a}, f, 0)
+			Lookahead: 4, AcceptanceRate: a}, f)
 		if sp <= last {
 			t.Errorf("acceptance %.1f gave %.2fx, not more than the previous %.2fx", a, sp, last)
 		}
@@ -623,7 +623,7 @@ func TestSpeculativeWithABadlyMatchedDraftIsSlower(t *testing.T) {
 	heavy := arch.Model{Params: 7000000000, Vocab: 128256, Hidden: 4096, Layers: 30,
 		Heads: 32, KVHeads: 8, MaxCtx: 8192}
 	_, _, sp := speculativeSpeedup(target, Speculative{Draft: heavy, Format: f,
-		Lookahead: 4, AcceptanceRate: 0.3}, f, 0)
+		Lookahead: 4, AcceptanceRate: 0.3}, f)
 	if sp >= 1 {
 		t.Fatalf("a heavy, rarely-accepted draft gave %.2fx, want a loss", sp)
 	}
@@ -633,7 +633,7 @@ func TestSpeculativeAcceptedPerStepIsCappedAtLookaheadPlusOne(t *testing.T) {
 	f, _ := quant.ByName("Q4_K_M")
 	m := llama8B()
 	_, accepted, _ := speculativeSpeedup(m, Speculative{Draft: m, Format: f,
-		Lookahead: 4, AcceptanceRate: 0.999}, f, 0)
+		Lookahead: 4, AcceptanceRate: 0.999}, f)
 	// At acceptance 1 the target's own token comes free on top of the K
 	// proposals, and no more than that.
 	if accepted > 5.001 || accepted < 4.9 {

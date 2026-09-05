@@ -2,7 +2,7 @@ BINARY  := llm-fit
 BIN_DIR := bin
 PKG     := ./cmd/llm-fit
 
-.PHONY: all build test tidy lint clean demo validate help
+.PHONY: all build test tidy lint clean demo validate help setup install run format analyze
 
 .DEFAULT_GOAL := help
 
@@ -24,9 +24,8 @@ test:
 	go test -race -count=1 ./...
 
 ## lint: vet and formatting check
-lint:
-	go vet ./...
-	@test -z "$$(gofmt -l . )" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
+lint: ## Run the whole gate — every hook, every file
+	pre-commit run --all-files
 
 ## tidy: tidy modules
 tidy:
@@ -45,3 +44,18 @@ validate: build
 ## clean: remove build artifacts
 clean:
 	rm -rf $(BIN_DIR)
+
+setup: ## Install the pre-commit hook
+	pre-commit install
+
+install: ## Install the binary into GOBIN
+	go install ./...
+
+run: ## Run the binary
+	go run ./cmd/llm-fit $(ARGS)
+
+format: ## Rewrite the sources to gofmt form
+	gofmt -w .
+
+analyze: ## Lint with the house rule set
+	golangci-lint run ./...

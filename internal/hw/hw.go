@@ -116,7 +116,8 @@ func Detect() Machine {
 			m.RAMBandwidth = assumedRAMBandwidthGBs
 			m.RAMEstimated = true
 			m.Warnings = append(m.Warnings, fmt.Sprintf(
-				"system RAM bandwidth could not be measured; assuming %d GB/s. Pass -ram-bandwidth to correct it — every CPU-offload speed figure divides by this",
+				"system RAM bandwidth could not be measured; assuming %d GB/s. Pass -ram-bandwidth to correct it — every "+
+					"CPU-offload speed figure divides by this",
 				assumedRAMBandwidthGBs))
 		}
 	}

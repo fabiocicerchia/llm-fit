@@ -131,11 +131,13 @@ func TestUnknownKVTypeFallsBackToF16(t *testing.T) {
 }
 
 func llamaCpp() Engine {
-	return Engine{Name: "llama.cpp", MBU: 0.80, MFU: 0.32, RuntimeOverheadBytes: 250 * MiB, CanOffloadCPU: true, MemoryFraction: 0.95}
+	return Engine{Name: "llama.cpp", MBU: 0.80, MFU: 0.32,
+		RuntimeOverheadBytes: 250 * MiB, CanOffloadCPU: true, MemoryFraction: 0.95}
 }
 
 func vllm() Engine {
-	return Engine{Name: "vLLM", MBU: 0.72, MFU: 0.55, RuntimeOverheadBytes: 2200 * MiB, CanOffloadCPU: false, MemoryFraction: 0.90}
+	return Engine{Name: "vLLM", MBU: 0.72, MFU: 0.55,
+		RuntimeOverheadBytes: 2200 * MiB, CanOffloadCPU: false, MemoryFraction: 0.90}
 }
 
 func rtx3090() Device {

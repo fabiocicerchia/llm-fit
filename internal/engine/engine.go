@@ -69,8 +69,9 @@ var All = []Engine{
 			RuntimeOverheadBytes: 400 * fit.MiB,
 			CanOffloadCPU:        true, MemoryFraction: 0.92,
 		},
-		Formats:     []quant.Family{quant.GGUF},
-		Summary:     "llama.cpp with model management and automatic layer splitting. Slightly slower, much less to configure.",
+		Formats: []quant.Family{quant.GGUF},
+		Summary: "llama.cpp with model management and automatic layer splitting. Slightly slower, much less to " +
+			"configure.",
 		InstallHint: "curl -fsSL https://ollama.com/install.sh | sh",
 	},
 	{
@@ -86,8 +87,9 @@ var All = []Engine{
 		Vendors:              []hw.Vendor{hw.NVIDIA, hw.AMD},
 		MinComputeCapability: 7.0,
 		Serving:              true,
-		Summary:              "Throughput serving with paged attention. Everything must be in VRAM; in exchange it holds many concurrent requests.",
-		InstallHint:          "pip install vllm",
+		Summary: "Throughput serving with paged attention. Everything must be in VRAM; in exchange it holds " +
+			"many concurrent requests.",
+		InstallHint: "pip install vllm",
 	},
 	{
 		Engine: fit.Engine{
@@ -113,8 +115,9 @@ var All = []Engine{
 		Formats:              []quant.Family{quant.EXL2, quant.GPTQ},
 		Vendors:              []hw.Vendor{hw.NVIDIA},
 		MinComputeCapability: 7.5,
-		Summary:              "The fastest single-user option on consumer NVIDIA, and EXL2 lets you pick the exact bits per weight.",
-		InstallHint:          "pip install exllamav2",
+		Summary: "The fastest single-user option on consumer NVIDIA, and EXL2 lets you pick the exact bits " +
+			"per weight.",
+		InstallHint: "pip install exllamav2",
 	},
 	{
 		Engine: fit.Engine{
@@ -122,9 +125,10 @@ var All = []Engine{
 			RuntimeOverheadBytes: 300 * fit.MiB,
 			CanOffloadCPU:        true, MemoryFraction: 0.90,
 		},
-		Formats:     []quant.Family{quant.MLX},
-		Vendors:     []hw.Vendor{hw.Apple},
-		Summary:     "Apple silicon native. Unified memory means no split to reason about, and it beats llama.cpp's Metal backend on prefill.",
+		Formats: []quant.Family{quant.MLX},
+		Vendors: []hw.Vendor{hw.Apple},
+		Summary: "Apple silicon native. Unified memory means no split to reason about, and it beats llama.cpp's Metal " +
+			"backend on prefill.",
 		InstallHint: "pip install mlx-lm",
 	},
 	{
@@ -186,7 +190,8 @@ func (e Engine) RunsOn(m hw.Machine) (bool, string) {
 		return false, e.Name + " needs " + vendorList(e.Vendors) + "; this machine has none"
 	}
 	if best == hw.NVIDIA && e.MinComputeCapability > 0 && cc > 0 && cc < e.MinComputeCapability {
-		return false, e.Name + " needs compute capability " + formatCapability(e.MinComputeCapability) + " or newer; this GPU is " + formatCapability(cc)
+		return false, e.Name + " needs compute capability " + formatCapability(e.MinComputeCapability) +
+			" or newer; this GPU is " + formatCapability(cc)
 	}
 	return true, ""
 }

@@ -172,7 +172,8 @@ const cpuCachePressure = 0.7
 func explain(est Estimate, p Plan, e Engine, cpuLayers int, cpuTotal int64) []string {
 	var out []string
 	if cpuLayers > 0 {
-		out = append(out, layerClause(cpuLayers)+" running on the CPU: every token waits on system RAM, which is why this is slow")
+		out = append(out,
+			layerClause(cpuLayers)+" running on the CPU: every token waits on system RAM, which is why this is slow")
 	}
 	// Fitting is not the same as staying resident. llama.cpp mmaps the weight
 	// file, so CPU-side layers live in reclaimable page cache — the same pages
@@ -183,10 +184,13 @@ func explain(est Estimate, p Plan, e Engine, cpuLayers int, cpuTotal int64) []st
 	// spent the gap in sustained major faults with swap pinned at 100%.
 	if est.CPUBytes > 0 && cpuTotal > 0 &&
 		float64(est.CPUBytes) > cpuCachePressure*float64(cpuTotal) {
-		out = append(out, "the CPU-side weights need most of the free RAM to stay cached; close other memory-hungry programs or expect it to fault off disk mid-generation")
+		out = append(out,
+			"the CPU-side weights need most of the free RAM to stay cached; close other memory-hungry programs or expect it "+
+				"to fault off disk mid-generation")
 	}
 	if est.KVBytes > est.WeightBytes {
-		out = append(out, "the KV cache is larger than the weights at this context — quantize the cache before dropping to a smaller quant")
+		out = append(out,
+			"the KV cache is larger than the weights at this context — quantize the cache before dropping to a smaller quant")
 	}
 	if p.Ctx > p.Model.MaxCtx {
 		out = append(out, "requested context exceeds what the model was trained for")
@@ -204,12 +208,15 @@ func explain(est Estimate, p Plan, e Engine, cpuLayers int, cpuTotal int64) []st
 			n, est.Parallelism, e.Name, est.DecodeTPS, est.AltDecodeTPS, alt))
 		// The thing people actually want to know before buying a second card.
 		if est.Parallelism == LayerSplit && est.AltDecodeTPS > est.DecodeTPS*1.2 {
-			out = append(out, "a layer split makes extra cards buy capacity, not speed — a tensor-parallel runtime would be faster on this hardware")
+			out = append(out,
+				"a layer split makes extra cards buy capacity, not speed — a tensor-parallel runtime would be faster on this "+
+					"hardware")
 		}
 		if est.Parallelism == TensorParallel && est.InterconnectTPS > 0 &&
 			est.InterconnectTPS < est.DecodeTPS*4 {
 			out = append(out, fmt.Sprintf(
-				"the interconnect is close to being the limit here (~%.0f tok/s of all-reduce alone at %.0f GB/s) — NVLink would move it",
+				"the interconnect is close to being the limit here (~%.0f tok/s of all-reduce alone at %.0f GB/s) — NVLink would "+
+					"move it",
 				est.InterconnectTPS, interconnect(p)))
 		}
 	}
@@ -219,10 +226,12 @@ func explain(est Estimate, p Plan, e Engine, cpuLayers int, cpuTotal int64) []st
 			verb = "LOSES"
 		}
 		out = append(out, fmt.Sprintf(
-			"speculative decoding %s %.2fx at an assumed %.0f%% acceptance rate (%.1f tokens per verify step); the draft also costs %s of VRAM",
+			"speculative decoding %s %.2fx at an assumed %.0f%% acceptance rate (%.1f tokens per verify step); the draft also "+
+				"costs %s of VRAM",
 			verb, est.Speedup, est.AcceptanceRate*100, est.AcceptedPerStep, humanBytes(est.DraftBytes)))
 		if est.Speedup < 1 {
-			out = append(out, "the draft is too expensive or too rarely accepted to pay for itself — try a smaller draft, or drop it")
+			out = append(out,
+				"the draft is too expensive or too rarely accepted to pay for itself — try a smaller draft, or drop it")
 		}
 	}
 	return out

@@ -15,8 +15,11 @@ package quant
 
 import "sort"
 
+// Family is the quantization format's ecosystem, which is what decides
+// whether a given engine can load it at all.
 type Family string
 
+// The quantization families, with the engines that read them.
 const (
 	GGUF   Family = "gguf"   // llama.cpp, Ollama, llamafile
 	AWQ    Family = "awq"    // vLLM, SGLang, TGI
@@ -28,6 +31,9 @@ const (
 	Native Family = "native" // unquantized fp16/bf16
 )
 
+// Format is one quantization, in bits per weight -- split by tensor role,
+// because quantizers deliberately keep embeddings and the output
+// projection at higher precision than the body.
 type Format struct {
 	Name   string
 	Family Family
@@ -92,6 +98,7 @@ var Formats = []Format{
 	uniform("BF16", Native, 16.0, 100, "unquantized"),
 }
 
+// ByName finds a quantization by its catalogue name, as --quant spells it.
 func ByName(name string) (Format, bool) {
 	for _, f := range Formats {
 		if f.Name == name {
@@ -101,6 +108,7 @@ func ByName(name string) (Format, bool) {
 	return Format{}, false
 }
 
+// ByFamily returns a family's formats, smallest bits-per-weight first.
 func ByFamily(fam Family) []Format {
 	var out []Format
 	for _, f := range Formats {

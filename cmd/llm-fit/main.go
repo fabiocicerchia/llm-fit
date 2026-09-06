@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -152,7 +153,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "check needs a model name, e.g. llm-fit check qwen3-8b")
 			os.Exit(exitUsage)
 		}
-		cmdCheck(machine, req, strings.Join(positional, " "), *asJSON, *useHF)
+		cmdCheck(context.Background(), machine, req, strings.Join(positional, " "), *asJSON, *useHF)
 	case "engines":
 		cmdEngines(machine)
 	case "models":
@@ -266,9 +267,10 @@ func cmdValidate(path string) {
 		fmt.Fprintln(os.Stderr, "  bench/observations.tsv is the file; see its header for how to add a row.")
 		os.Exit(2)
 	}
-	defer func() { _ = f.Close() }() // read-only: a failed close has nothing to report
-
 	obs, err := validate.Parse(f)
+	// Closed here rather than deferred: the error paths below call os.Exit,
+	// which does not run deferred functions.
+	_ = f.Close() //nolint:errcheck // read-only: a failed close has nothing to report
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "llm-fit: %s: %v\n", path, err)
 		os.Exit(2)

@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// Spec is a GPU's bandwidth and compute, looked up rather than measured.
+//
 // Memory bandwidth is the number that decides decode speed, and no driver
 // reports it: nvidia-smi gives you the name and the capacity and nothing about
 // how fast the memory is. So it has to be looked up.

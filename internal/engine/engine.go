@@ -18,6 +18,8 @@ import (
 	"github.com/fabiocicerchia/llm-fit/internal/quant"
 )
 
+// Engine is one inference runtime, and the quantization families it can
+// actually load -- which is what rules most combinations out.
 type Engine struct {
 	fit.Engine
 	Formats []quant.Family
@@ -44,6 +46,7 @@ func (e Engine) HintFor(goos string) string {
 	return e.InstallHint
 }
 
+// All is every engine llm-fit knows how to cost.
 var All = []Engine{
 	{
 		Engine: fit.Engine{
@@ -140,6 +143,7 @@ var All = []Engine{
 	},
 }
 
+// ByName finds an engine by its short name, as the --engine flag spells it.
 func ByName(name string) (Engine, bool) {
 	for _, e := range All {
 		if strings.EqualFold(e.Name, name) {

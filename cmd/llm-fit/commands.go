@@ -4,6 +4,7 @@ package main
 // render.go; none of them formats a column.
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -41,8 +42,10 @@ func cmdSuggest(m hw.Machine, req advisor.Request, top int, asJSON bool) {
 	printSuggestions(m, req, opts)
 }
 
-func cmdCheck(m hw.Machine, req advisor.Request, query string, asJSON, useHF bool) {
-	model, fileFormat := resolveModel(query, useHF)
+func cmdCheck(
+	ctx context.Context, m hw.Machine, req advisor.Request, query string, asJSON, useHF bool,
+) {
+	model, fileFormat := resolveModel(ctx, query, useHF)
 
 	opts := advisor.Inspect(model, m, req)
 	if fileFormat != nil {
@@ -63,7 +66,7 @@ func cmdCheck(m hw.Machine, req advisor.Request, query string, asJSON, useHF boo
 //
 // The returned format is non-nil only for a file, where the quantization is a
 // fact about the copy on disk rather than one of the options.
-func resolveModel(query string, useHF bool) (arch.Model, *quant.Format) {
+func resolveModel(ctx context.Context, query string, useHF bool) (arch.Model, *quant.Format) {
 	switch {
 	// A path to a file on disk is unambiguous — no catalogue entry or repo id
 	// looks like one — so it needs no flag to select it, and it describes the
@@ -81,7 +84,7 @@ func resolveModel(query string, useHF bool) (arch.Model, *quant.Format) {
 			"sizing every format instead of the one in the file\n", query, info.FileType)
 		return info.Model(), nil
 	case useHF:
-		fetched, err := hfapi.Fetch(query)
+		fetched, err := hfapi.Fetch(ctx, query)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(exitUnavailable)

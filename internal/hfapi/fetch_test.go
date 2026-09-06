@@ -56,7 +56,7 @@ func TestFetchReadsADenseRepo(t *testing.T) {
 		"config.json":                  denseConfig,
 		"model.safetensors.index.json": `{"metadata":{"total_size":16000000000}}`,
 	})
-	m, err := fetch(c, "Qwen/Qwen3-8B")
+	m, err := fetch(t.Context(), c, "Qwen/Qwen3-8B")
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestFetchReadsADenseRepo(t *testing.T) {
 // then has to carry the parameter count on its own.
 func TestFetchEstimatesParamsWithoutAnIndex(t *testing.T) {
 	c := serving(t, map[string]string{"config.json": denseConfig})
-	m, err := fetch(c, "Qwen/Qwen3-8B")
+	m, err := fetch(t.Context(), c, "Qwen/Qwen3-8B")
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestFetchSetsActiveParamsForAnMoE(t *testing.T) {
 	  "num_attention_heads": 32, "num_key_value_heads": 4, "vocab_size": 151936,
 	  "max_position_embeddings": 40960, "num_experts": 128, "num_experts_per_tok": 8
 	}`})
-	m, err := fetch(c, "Qwen/Qwen3-30B-A3B")
+	m, err := fetch(t.Context(), c, "Qwen/Qwen3-30B-A3B")
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestFetchUnwrapsAMultimodalConfig(t *testing.T) {
 	    "hidden_size": 2560, "num_attention_heads": 8, "num_key_value_heads": 4,
 	    "vocab_size": 262144, "max_position_embeddings": 131072}
 	}`})
-	m, err := fetch(c, "google/gemma-3-4b-it")
+	m, err := fetch(t.Context(), c, "google/gemma-3-4b-it")
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestFetchFillsInAMissingContextLength(t *testing.T) {
 	  "model_type": "llama", "num_hidden_layers": 32, "hidden_size": 4096,
 	  "num_attention_heads": 32, "vocab_size": 32000
 	}`})
-	m, err := fetch(c, "meta-llama/Llama-2-7b-hf")
+	m, err := fetch(t.Context(), c, "meta-llama/Llama-2-7b-hf")
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -163,12 +163,12 @@ func TestFetchRefusesWhatItCannotPlanAgainst(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := fetch(serving(t, tc.files), tc.id)
+			_, err := fetch(t.Context(), serving(t, tc.files), tc.id)
 			if err == nil {
-				t.Fatalf("fetch(%q) returned no error, want one mentioning %q", tc.id, tc.want)
+				t.Fatalf("fetch(t.Context(), %q) returned no error, want one mentioning %q", tc.id, tc.want)
 			}
 			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("fetch(%q) said %q, want it to mention %q", tc.id, err, tc.want)
+				t.Errorf("fetch(t.Context(), %q) said %q, want it to mention %q", tc.id, err, tc.want)
 			}
 		})
 	}
@@ -185,7 +185,7 @@ func TestFetchExplainsAGatedRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("test server URL %q: %v", srv.URL, err)
 	}
-	_, err = fetch(&http.Client{Transport: toServer{target: u}}, "meta-llama/Llama-3.1-8B")
+	_, err = fetch(t.Context(), &http.Client{Transport: toServer{target: u}}, "meta-llama/Llama-3.1-8B")
 	if err == nil || !strings.Contains(err.Error(), "gated") {
 		t.Errorf("fetch on a 401 said %v, want it to mention the repo is gated", err)
 	}

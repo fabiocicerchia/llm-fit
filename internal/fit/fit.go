@@ -25,6 +25,8 @@ import (
 	"strconv"
 )
 
+// MiB and GiB are the units every memory figure in this package is in.
+// Binary, not decimal: so is every number a driver or a GGUF header reports.
 const (
 	MiB = 1 << 20
 	GiB = 1 << 30

@@ -110,7 +110,7 @@ func Read(path string) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
-	defer func() { _ = f.Close() }() // read-only: a failed close has nothing to report
+	defer func() { _ = f.Close() }() //nolint:errcheck // read-only: a failed close has nothing to report
 	return read(f)
 }
 

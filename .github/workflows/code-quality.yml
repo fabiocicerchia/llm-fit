@@ -56,7 +56,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
-      - run: make lint # go vet + gofmt check
+      # No `make lint` here: the contract points that verb at the whole
+      # pre-commit gate, which the quality job above already runs — and this
+      # job installs Go only, so it has no pre-commit to run it with.
       - run: make test
       - run: make build
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0

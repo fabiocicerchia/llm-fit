@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// MeasureRAMBandwidth times a large sequential read to estimate system RAM
+// bandwidth.
+//
 // System RAM bandwidth cannot be read without root — dmidecode knows the DIMM
 // speed, nothing in /proc or /sys does — and it is the number every CPU-offload
 // estimate divides by. A table keyed on CPU model would be a guess about the
@@ -49,7 +52,9 @@ func MeasureRAMBandwidth() float64 {
 	best := 0.0
 	for r := 0; r < rounds; r++ {
 		done := make(chan struct{}, threads)
-		start := time.Now()
+		// Measuring elapsed time IS this function; an injected clock would be
+		// a clock that cannot measure.
+		start := time.Now() //nolint:forbidigo // see above
 		for i := 0; i < threads; i++ {
 			go func(i int) {
 				copy(dst[i], src[i])

@@ -8,6 +8,7 @@ package hw
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,8 +18,12 @@ import (
 	"time"
 )
 
+// Vendor is who made a GPU, which decides how it is detected and which
+// engines will talk to it.
 type Vendor string
 
+// The vendors llm-fit can detect. Unknown is a real device whose vendor
+// string did not match any of the others, not the absence of a device.
 const (
 	NVIDIA  Vendor = "NVIDIA"
 	AMD     Vendor = "AMD"
@@ -49,6 +54,8 @@ const (
 	probeTimeout = 5 * time.Second
 )
 
+// GPU is one detected accelerator. Bandwidth and TFLOPS come from the table
+// in gpudb.go when the driver does not report them -- see Estimated.
 type GPU struct {
 	Name              string
 	Vendor            Vendor
@@ -62,6 +69,8 @@ type GPU struct {
 	Estimated bool
 }
 
+// Machine is the host llm-fit is deciding for: its CPU, its RAM, and every
+// GPU it could find.
 type Machine struct {
 	OS           string
 	Arch         string
@@ -90,10 +99,8 @@ func Detect() Machine {
 		detectDarwin(&m)
 	}
 
-	if gpus, warn := detectNvidia(); len(gpus) > 0 {
+	if gpus := detectNvidia(); len(gpus) > 0 {
 		m.GPUs = append(m.GPUs, gpus...)
-	} else if warn != "" {
-		m.Warnings = append(m.Warnings, warn)
 	}
 	if gpus := detectAMD(); len(gpus) > 0 {
 		m.GPUs = append(m.GPUs, gpus...)
@@ -109,7 +116,8 @@ func Detect() Machine {
 			m.RAMBandwidth = assumedRAMBandwidthGBs
 			m.RAMEstimated = true
 			m.Warnings = append(m.Warnings, fmt.Sprintf(
-				"system RAM bandwidth could not be measured; assuming %d GB/s. Pass -ram-bandwidth to correct it — every CPU-offload speed figure divides by this",
+				"system RAM bandwidth could not be measured; assuming %d GB/s. Pass -ram-bandwidth to correct it — every "+
+					"CPU-offload speed figure divides by this",
 				assumedRAMBandwidthGBs))
 		}
 	}
@@ -118,6 +126,7 @@ func Detect() Machine {
 
 func detectLinuxCPU(m *Machine) {
 	if f, err := os.Open("/proc/cpuinfo"); err == nil {
+		//nolint:errcheck // read-only probe of /proc; nothing to report a failed close to
 		defer func() { _ = f.Close() }()
 		s := bufio.NewScanner(f)
 		for s.Scan() {
@@ -128,6 +137,7 @@ func detectLinuxCPU(m *Machine) {
 		}
 	}
 	if f, err := os.Open("/proc/meminfo"); err == nil {
+		//nolint:errcheck // read-only probe of /proc; nothing to report a failed close to
 		defer func() { _ = f.Close() }()
 		s := bufio.NewScanner(f)
 		for s.Scan() {
@@ -184,12 +194,12 @@ func detectDarwin(m *Machine) {
 	})
 }
 
-func detectNvidia() ([]GPU, string) {
+func detectNvidia() []GPU {
 	out := run("nvidia-smi",
 		"--query-gpu=name,memory.total,memory.free,compute_cap",
 		"--format=csv,noheader,nounits")
 	if strings.TrimSpace(out) == "" {
-		return nil, ""
+		return nil
 	}
 	var gpus []GPU
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
@@ -215,7 +225,7 @@ func detectNvidia() ([]GPU, string) {
 		}
 		gpus = append(gpus, g)
 	}
-	return gpus, ""
+	return gpus
 }
 
 func detectAMD() []GPU {
@@ -267,7 +277,11 @@ func run(name string, args ...string) string {
 		return ""
 	}
 	done := make(chan string, 1)
-	cmd := exec.Command(name, args...)
+	// The timeout below is what bounds this probe; a context would duplicate
+	// it, and the goroutine already owns the process.
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
 	go func() {
 		out, err := cmd.Output()
 		if err != nil {
@@ -280,12 +294,16 @@ func run(name string, args ...string) string {
 	case s := <-done:
 		return s
 	case <-time.After(probeTimeout):
-		_ = cmd.Process.Kill()
+		// The probe already timed out and its output is discarded; a process
+		// that will not die is not something this detection can act on.
+		_ = cmd.Process.Kill() //nolint:errcheck // see above
 		return ""
 	}
 }
 
 func parseFloat(s string) float64 {
-	f, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	// A field that is not a number reads as zero, which every caller already
+	// treats as "the driver did not tell us".
+	f, _ := strconv.ParseFloat(strings.TrimSpace(s), 64) //nolint:errcheck // see above
 	return f
 }

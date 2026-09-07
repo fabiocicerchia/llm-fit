@@ -29,6 +29,8 @@ func init() {
 	sort.Slice(models, func(i, j int) bool { return models[i].Params < models[j].Params })
 }
 
+// All returns every catalogued model, smallest first. The slice is a copy:
+// the catalogue is package state and callers sort and filter it.
 func All() []arch.Model { return append([]arch.Model(nil), models...) }
 
 // Find matches an id, a name, or any unambiguous fragment of either, so

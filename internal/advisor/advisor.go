@@ -31,6 +31,8 @@ import (
 // inference process.
 const ramHeadroom = 0.85
 
+// Request is one question put to the advisor: the shape of the workload,
+// plus the floors below which a plan is not worth reporting.
 type Request struct {
 	Ctx    int
 	KVType string
@@ -58,6 +60,8 @@ type Request struct {
 	Draft *fit.Speculative
 }
 
+// Option is one model/engine/quantization combination the advisor costed,
+// with the estimate that decided its verdict.
 type Option struct {
 	Model    arch.Model
 	Engine   engine.Engine

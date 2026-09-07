@@ -23,6 +23,7 @@ func verdictMark(v fit.Verdict) string {
 		return "usable"
 	case fit.Sluggish:
 		return "sluggish"
+	case fit.Unusable:
 	}
 	return "unusable"
 }
@@ -83,5 +84,7 @@ func truncate(s string, n int) string {
 func emitJSON(v any) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
+	// Encoding to stdout: a write error here has already lost the output, and
+	// the only place left to report it is the same broken stream.
+	_ = enc.Encode(v) //nolint:errcheck // see above
 }

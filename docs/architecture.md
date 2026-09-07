@@ -4,7 +4,7 @@ A pipeline: read the hardware, enumerate every combination, score them, print
 the best. Each stage is a package, and the two that hold decisions hold the
 tests.
 
-```
+```text
 hw ──► advisor ──► fit ──► Estimate
         ▲   ▲       ▲
    catalog  engine  quant
@@ -13,17 +13,17 @@ hw ──► advisor ──► fit ──► Estimate
 
 ## Packages
 
-| Package | Responsibility |
-|---|---|
-| `internal/arch` | A model's shape. GQA/MLA/MoE are distinct cases, not scaling factors. |
-| `internal/quant` | Bits per weight per format, calibrated against published GGUF file sizes. |
-| `internal/hw` | Detection: `nvidia-smi`, `rocm-smi`, `sysctl`, `/proc`, plus the GPU spec table (`gpus.json`) and the memory-bandwidth measurement. |
-| `internal/engine` | What each runtime can load and where it can run. |
-| `internal/fit` | The arithmetic. Pure. Memory, KV cache, decode and prefill speed. |
-| `internal/catalog` | The embedded model list. |
-| `internal/hfapi` | Reads any model's shape from Hugging Face. |
-| `internal/gguf` | Reads the header and tensor directory of a GGUF file on disk. |
-| `internal/advisor` | Search and ranking — the tool's opinion. |
+| Package            | Responsibility                                                                                                                      |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `internal/arch`    | A model's shape. GQA/MLA/MoE are distinct cases, not scaling factors.                                                               |
+| `internal/quant`   | Bits per weight per format, calibrated against published GGUF file sizes.                                                           |
+| `internal/hw`      | Detection: `nvidia-smi`, `rocm-smi`, `sysctl`, `/proc`, plus the GPU spec table (`gpus.json`) and the memory-bandwidth measurement. |
+| `internal/engine`  | What each runtime can load and where it can run.                                                                                    |
+| `internal/fit`     | The arithmetic. Pure. Memory, KV cache, decode and prefill speed.                                                                   |
+| `internal/catalog` | The embedded model list.                                                                                                            |
+| `internal/hfapi`   | Reads any model's shape from Hugging Face.                                                                                          |
+| `internal/gguf`    | Reads the header and tensor directory of a GGUF file on disk.                                                                       |
+| `internal/advisor` | Search and ranking — the tool's opinion.                                                                                            |
 
 ## Why the split matters
 
@@ -93,12 +93,12 @@ quick to read a document.
 Four corrections do most of the work, and skipping any one of them produces
 confidently wrong advice:
 
-| | |
-|---|---|
-| **Quantization is not the number in its name** | Q4_K_M is 4.83 bits per weight, not 4. Block scales, and higher-precision embeddings, are the difference between predicting 35GB for a 70B and the 42.5GB it really is. |
-| **Grouped-query attention** | Llama-3-70B has 64 query heads and 8 KV heads. Sizing its cache off query heads overstates it 8×. DeepSeek's MLA is a different formula again — roughly a fourteenth of the GQA equivalent. |
-| **Mixture of experts** | Qwen3-30B-A3B occupies 30B of memory and reads 3.3B per token. Memory of a 30B, speed of a 3B — which is why it is often the best answer on a small card, and why it tops the list above. |
-| **The KV cache is not a rounding error** | At 128k context an 8B model's cache exceeds its weights, and generation slows as the conversation grows. Quantizing the cache to `q8_0` usually buys more than dropping a quantization level. |
+|                                                |                                                                                                                                                                                               |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Quantization is not the number in its name** | Q4_K_M is 4.83 bits per weight, not 4. Block scales, and higher-precision embeddings, are the difference between predicting 35GB for a 70B and the 42.5GB it really is.                       |
+| **Grouped-query attention**                    | Llama-3-70B has 64 query heads and 8 KV heads. Sizing its cache off query heads overstates it 8×. DeepSeek's MLA is a different formula again — roughly a fourteenth of the GQA equivalent.   |
+| **Mixture of experts**                         | Qwen3-30B-A3B occupies 30B of memory and reads 3.3B per token. Memory of a 30B, speed of a 3B — which is why it is often the best answer on a small card, and why it tops the list above.     |
+| **The KV cache is not a rounding error**       | At 128k context an 8B model's cache exceeds its weights, and generation slows as the conversation grows. Quantizing the cache to `q8_0` usually buys more than dropping a quantization level. |
 
 The memory model is checked against published GGUF file sizes rather than
 against itself — see `internal/fit/fit_test.go`, which asserts predictions land
@@ -111,13 +111,13 @@ quantizations.
 false of **tensor parallelism**, and modelling only the first made vLLM look
 worse than it is.
 
-| | Layer split | Tensor parallel |
-|---|---|---|
-| Who | llama.cpp, Ollama | vLLM, SGLang, ExLlamaV2, TensorRT-LLM |
-| Where the weights go | whole layers per card | every matrix sharded across all cards |
-| Effective bandwidth | **harmonic** mean — one card at a time, so for identical cards it is one card's | **sum** — all cards read their shard at once |
-| Prefill FLOPs | one card's | all cards' |
-| Interconnect | nothing crosses it per token | an all-reduce per layer per token |
+|                      | Layer split                                                                     | Tensor parallel                              |
+| -------------------- | ------------------------------------------------------------------------------- | -------------------------------------------- |
+| Who                  | llama.cpp, Ollama                                                               | vLLM, SGLang, ExLlamaV2, TensorRT-LLM        |
+| Where the weights go | whole layers per card                                                           | every matrix sharded across all cards        |
+| Effective bandwidth  | **harmonic** mean — one card at a time, so for identical cards it is one card's | **sum** — all cards read their shard at once |
+| Prefill FLOPs        | one card's                                                                      | all cards'                                   |
+| Interconnect         | nothing crosses it per token                                                    | an all-reduce per layer per token            |
 
 Two identical 3090s therefore decode at ~936 GB/s under llama.cpp and ~1872
 GB/s under vLLM, and that is the difference the estimate now shows. `-parallel`

@@ -15,7 +15,7 @@ func TestExitCodesDistinguishTheKindsOfFailure(t *testing.T) {
 		t.Skip("builds the binary and runs it several times")
 	}
 	bin := filepath.Join(t.TempDir(), "llm-fit")
-	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
@@ -38,7 +38,7 @@ func TestExitCodesDistinguishTheKindsOfFailure(t *testing.T) {
 		{"success", []string{"models"}, 0},
 	}
 	for _, c := range cases {
-		run := exec.Command(bin, c.args...)
+		run := exec.CommandContext(t.Context(), bin, c.args...)
 		_ = run.Run() // a non-zero exit is the subject here, not a test failure
 		if got := run.ProcessState.ExitCode(); got != c.want {
 			t.Errorf("%s: exit %d, want %d", c.what, got, c.want)

@@ -8,6 +8,7 @@
 package hfapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,19 +97,19 @@ func legalIDRune(r rune) bool {
 }
 
 // Fetch builds a Model from a Hugging Face repo id such as "Qwen/Qwen3-8B".
-func Fetch(id string) (arch.Model, error) {
-	return fetch(&http.Client{Timeout: requestTimeout}, id)
+func Fetch(ctx context.Context, id string) (arch.Model, error) {
+	return fetch(ctx, &http.Client{Timeout: requestTimeout}, id)
 }
 
 // fetch is Fetch with the HTTP client supplied, so the tests can point one at a
 // server of their own instead of huggingface.co. base stays a constant: the id
 // allowlist is only worth anything if the host it is pasted into cannot move.
-func fetch(client *http.Client, id string) (arch.Model, error) {
+func fetch(ctx context.Context, client *http.Client, id string) (arch.Model, error) {
 	if err := ValidateID(id); err != nil {
 		return arch.Model{}, err
 	}
 
-	cfg, err := fetchConfig(client, id)
+	cfg, err := fetchConfig(ctx, client, id)
 	if err != nil {
 		return arch.Model{}, err
 	}
@@ -118,7 +119,7 @@ func fetch(client *http.Client, id string) (arch.Model, error) {
 	// The parameter count is not in config.json. The safetensors index records
 	// the total byte size, which divided by the dtype width gives it.
 	var idx safetensorsIndex
-	if err := getJSON(client, id, "model.safetensors.index.json", &idx); err == nil && idx.Metadata.TotalSize > 0 {
+	if err := getJSON(ctx, client, id, "model.safetensors.index.json", &idx); err == nil && idx.Metadata.TotalSize > 0 {
 		m.Params = idx.Metadata.TotalSize / 2 // bf16/fp16 checkpoints
 	} else {
 		m.Params = estimateParams(m)
@@ -132,9 +133,9 @@ func fetch(client *http.Client, id string) (arch.Model, error) {
 
 // fetchConfig reads config.json and returns the block of it that describes the
 // model that generates tokens, refusing a repo whose config cannot describe one.
-func fetchConfig(client *http.Client, id string) (config, error) {
+func fetchConfig(ctx context.Context, client *http.Client, id string) (config, error) {
 	var cfg config
-	if err := getJSON(client, id, "config.json", &cfg); err != nil {
+	if err := getJSON(ctx, client, id, "config.json", &cfg); err != nil {
 		return config{}, err
 	}
 	// Multimodal repos put the language model one level down; the vision tower
@@ -195,7 +196,7 @@ func paramCount(m arch.Model, ffnCopies int64) int64 {
 	attn := int64(float64(h*h) * (2 + 2*kvRatio))
 	// Feed-forward is typically 8/3·hidden per layer across three projections
 	// in a gated architecture.
-	ffn := int64(8 * h * h)
+	ffn := 8 * h * h
 	embed := int64(m.Vocab) * h
 	if !m.TiedEmbeddings {
 		embed *= 2
@@ -219,9 +220,9 @@ func activeParams(m arch.Model) int64 {
 	return paramCount(m, int64(m.ExpertsActive))
 }
 
-func getJSON(c *http.Client, id, file string, v any) error {
+func getJSON(ctx context.Context, c *http.Client, id, file string, v any) error {
 	url := fmt.Sprintf("%s/%s/resolve/main/%s", base, id, file)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
@@ -234,7 +235,9 @@ func getJSON(c *http.Client, id, file string, v any) error {
 	if err != nil {
 		return fmt.Errorf("fetching %s: %w", id, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	// The response is fully read or abandoned below either way; a failed
+	// close only leaks a connection back to the pool.
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // see above
 
 	switch resp.StatusCode {
 	case http.StatusOK:
@@ -258,6 +261,9 @@ func getJSON(c *http.Client, id, file string, v any) error {
 
 func token() string {
 	for _, k := range []string{"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"} {
+		//nolint:forbidigo // the token is read where it is used because a
+		// gated-repo 401 is the only thing that needs it, and threading it
+		// through every call site would put a secret in five more signatures.
 		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
 			return v
 		}

@@ -150,8 +150,12 @@ type Estimate struct {
 	Reasons []string
 }
 
+// Verdict is how well a plan runs, from Unusable to Excellent. Ordered, so
+// a caller can ask for "Usable or better" with a comparison.
 type Verdict int
 
+// The verdicts, worst first. Unusable means it does not fit or is so slow
+// that it may as well not; Sluggish fits but offloads enough to hurt.
 const (
 	Unusable Verdict = iota
 	Sluggish
@@ -170,6 +174,7 @@ func (v Verdict) String() string {
 		return "usable"
 	case Sluggish:
 		return "sluggish"
+	case Unusable:
 	}
 	return "unusable"
 }

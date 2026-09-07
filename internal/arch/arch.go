@@ -20,8 +20,9 @@ package arch
 type Attention string
 
 const (
-	// MHA/GQA/MQA are the same formula; the head count is what differs. MQA is
-	// GQA with one KV head, MHA is GQA with as many KV heads as query heads.
+	// GQA covers MHA, GQA and MQA: they are the same formula and only the
+	// head count differs. MQA is GQA with one KV head, MHA is GQA with as
+	// many KV heads as query heads.
 	GQA Attention = "gqa"
 	// MLA compresses KV into a shared latent vector (DeepSeek-V2 onward). The
 	// cache is a different shape entirely and roughly an order of magnitude
@@ -29,6 +30,8 @@ const (
 	MLA Attention = "mla"
 )
 
+// Model is one model's architecture, in the terms the KV-cache and weight
+// formulas need rather than the terms a model card uses.
 type Model struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
@@ -87,6 +90,8 @@ func (m Model) Active() int64 {
 	return m.Params
 }
 
+// IsMoE reports whether this is a mixture-of-experts model, which is what
+// separates the parameters that are stored from the ones that are active.
 func (m Model) IsMoE() bool { return m.Experts > 1 }
 
 // EmbeddingParams counts the token embedding matrix, and the output projection

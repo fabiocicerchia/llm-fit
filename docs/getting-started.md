@@ -77,13 +77,13 @@ licence.
 For scripting. The numbers are `sysexits.h`, so a caller can tell a typo from an
 outage without reading the message.
 
-| Code | Meaning |
-|---|---|
-| 0 | it worked |
-| 2 | a flag the `flag` package rejected — a non-numeric `-ctx`, an unknown flag |
-| 64 | a usage error this tool found: unknown verb, missing operand, a `-kv` or `-gpu` value outside the table, a model name matching nothing or several things |
-| 65 | the file given to `check` is not readable as GGUF |
-| 69 | Hugging Face could not be reached for `check -hf` |
+| Code | Meaning                                                                                                                                                  |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | it worked                                                                                                                                                |
+| 2    | a flag the `flag` package rejected — a non-numeric `-ctx`, an unknown flag                                                                               |
+| 64   | a usage error this tool found: unknown verb, missing operand, a `-kv` or `-gpu` value outside the table, a model name matching nothing or several things |
+| 65   | the file given to `check` is not readable as GGUF                                                                                                        |
+| 69   | Hugging Face could not be reached for `check -hf`                                                                                                        |
 
 ## Development
 

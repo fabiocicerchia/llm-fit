@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// Spec is a GPU's bandwidth and compute, looked up rather than measured.
+//
 // Memory bandwidth is the number that decides decode speed, and no driver
 // reports it: nvidia-smi gives you the name and the capacity and nothing about
 // how fast the memory is. So it has to be looked up.
@@ -70,7 +72,9 @@ func init() {
 	// fitting nothing at zero tokens per second instead of failing here.
 	for i, s := range db.Discrete {
 		if s.Match == "" || s.VRAMGiB <= 0 || s.BandwidthGBs <= 0 || s.Vendor == "" {
-			panic(fmt.Sprintf("hw: gpus.json discrete[%d] %q: match, vram_gib, bandwidth_gbs and vendor are all required", i, s.Match))
+			panic(fmt.Sprintf(
+				"hw: gpus.json discrete[%d] %q: match, vram_gib, bandwidth_gbs and vendor are all required",
+				i, s.Match))
 		}
 	}
 	for i, s := range db.Apple {

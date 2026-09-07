@@ -15,8 +15,11 @@ package quant
 
 import "sort"
 
+// Family is the quantization format's ecosystem, which is what decides
+// whether a given engine can load it at all.
 type Family string
 
+// The quantization families, with the engines that read them.
 const (
 	GGUF   Family = "gguf"   // llama.cpp, Ollama, llamafile
 	AWQ    Family = "awq"    // vLLM, SGLang, TGI
@@ -28,6 +31,9 @@ const (
 	Native Family = "native" // unquantized fp16/bf16
 )
 
+// Format is one quantization, in bits per weight -- split by tensor role,
+// because quantizers deliberately keep embeddings and the output
+// projection at higher precision than the body.
 type Format struct {
 	Name   string
 	Family Family
@@ -63,16 +69,19 @@ var Formats = []Format{
 	uniform("IQ1_M", GGUF, 1.75, 20, "as above, marginally better"),
 	uniform("IQ2_XXS", GGUF, 2.06, 30, "heavy loss; usable only on 70B+ where there is redundancy to spare"),
 	uniform("IQ2_M", GGUF, 2.70, 40, "the smallest quant most people find tolerable, and only on large models"),
-	{Name: "Q2_K", Family: GGUF, BodyBPW: 3.35, EmbedBPW: 2.63, OutputBPW: 6.56, Quality: 42, Notes: "noticeable degradation"},
+	{Name: "Q2_K", Family: GGUF, BodyBPW: 3.35, EmbedBPW: 2.63, OutputBPW: 6.56, Quality: 42,
+		Notes: "noticeable degradation"},
 	uniform("IQ3_XXS", GGUF, 3.06, 48, "better than Q3_K at the same size, slower on CPU"),
 	{Name: "Q3_K_S", Family: GGUF, BodyBPW: 3.50, EmbedBPW: 3.44, OutputBPW: 6.56, Quality: 52},
 	{Name: "Q3_K_M", Family: GGUF, BodyBPW: 3.91, EmbedBPW: 3.44, OutputBPW: 6.56, Quality: 58},
 	uniform("IQ3_M", GGUF, 3.66, 60, "i-quant; matches Q3_K_L quality at Q3_K_M size"),
 	{Name: "Q3_K_L", Family: GGUF, BodyBPW: 4.27, EmbedBPW: 3.44, OutputBPW: 6.56, Quality: 62},
 	uniform("IQ4_XS", GGUF, 4.25, 70, "smaller than Q4_K_S at similar quality; the best sub-4.5 option"),
-	{Name: "Q4_0", Family: GGUF, BodyBPW: 4.55, EmbedBPW: 4.50, OutputBPW: 6.56, Quality: 63, Notes: "legacy; Q4_K_M is better at the same size"},
+	{Name: "Q4_0", Family: GGUF, BodyBPW: 4.55, EmbedBPW: 4.50, OutputBPW: 6.56, Quality: 63,
+		Notes: "legacy; Q4_K_M is better at the same size"},
 	{Name: "Q4_K_S", Family: GGUF, BodyBPW: 4.58, EmbedBPW: 4.50, OutputBPW: 6.56, Quality: 72},
-	{Name: "Q4_K_M", Family: GGUF, BodyBPW: 4.83, EmbedBPW: 4.50, OutputBPW: 6.56, Quality: 78, Notes: "the default recommendation: the knee of the size/quality curve"},
+	{Name: "Q4_K_M", Family: GGUF, BodyBPW: 4.83, EmbedBPW: 4.50, OutputBPW: 6.56, Quality: 78,
+		Notes: "the default recommendation: the knee of the size/quality curve"},
 	{Name: "Q5_K_S", Family: GGUF, BodyBPW: 5.52, EmbedBPW: 5.50, OutputBPW: 6.56, Quality: 84},
 	{Name: "Q5_K_M", Family: GGUF, BodyBPW: 5.67, EmbedBPW: 5.50, OutputBPW: 6.56, Quality: 87},
 	uniform("Q6_K", GGUF, 6.56, 94, "effectively indistinguishable from fp16 for most uses"),
@@ -92,6 +101,7 @@ var Formats = []Format{
 	uniform("BF16", Native, 16.0, 100, "unquantized"),
 }
 
+// ByName finds a quantization by its catalogue name, as --quant spells it.
 func ByName(name string) (Format, bool) {
 	for _, f := range Formats {
 		if f.Name == name {
@@ -101,6 +111,7 @@ func ByName(name string) (Format, bool) {
 	return Format{}, false
 }
 
+// ByFamily returns a family's formats, smallest bits-per-weight first.
 func ByFamily(fam Family) []Format {
 	var out []Format
 	for _, f := range Formats {

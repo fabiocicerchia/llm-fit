@@ -1,0 +1,10 @@
+{
+  "Exclude": [
+    "^LICENSE$",
+    "^cmd/llm\\-fit/main\\.go$",
+    "^internal/hfapi/fetch_test\\.go$"
+  ],
+  "Disable": {
+    "IndentSize": true
+  }
+}

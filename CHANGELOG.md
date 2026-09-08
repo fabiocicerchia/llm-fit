@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0](https://github.com/fabiocicerchia/llm-fit/compare/v1.3.1...v1.4.0) (2026-09-08)
+
+
+### Features
+
+* add the eight-verb repo contract ([#52](https://github.com/fabiocicerchia/llm-fit/issues/52)) ([ccb4508](https://github.com/fabiocicerchia/llm-fit/commit/ccb4508275ecd92297f3c3fca8aa406a00bbbd00))
+
 ## [1.3.1](https://github.com/fabiocicerchia/llm-fit/compare/v1.3.0...v1.3.1) (2026-09-04)
 
 ### Bug Fixes

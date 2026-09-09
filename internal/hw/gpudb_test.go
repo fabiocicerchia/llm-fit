@@ -81,9 +81,11 @@ func TestMeasuredBandwidthIsPlausible(t *testing.T) {
 		t.Skip("allocates and copies several hundred MB")
 	}
 	bw := MeasureRAMBandwidth()
-	// Slower than single-channel DDR3 or faster than HBM means the measurement
-	// is broken, not that the machine is unusual.
-	if bw < 2 || bw > 2000 {
+	// Faster than HBM, or slow enough to be no measurement at all, means the
+	// measurement is broken rather than the machine unusual. The floor is set
+	// for a shared CI runner, not for bare metal: a noisy neighbour on a hosted
+	// runner has measured 1.7 GB/s, which is a real machine having a bad day.
+	if bw < 0.5 || bw > 2000 {
 		t.Errorf("measured %.1f GB/s, which is not a real machine", bw)
 	}
 }

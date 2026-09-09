@@ -79,15 +79,17 @@ jobs:
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
       - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
 
-      # `--skip=publish` because the draft release already exists and this job
-      # only attaches to it; `--skip=validate` because the tag it is building
+      # publish is NOT skipped: the Homebrew cask is published by that pipe, and
+      # skipping it built the cask into dist/ and pushed it nowhere. The release
+      # pipe is disabled in .goreleaser.yaml instead, so this cannot create the
+      # release release-please already made. `--skip=validate` because the tag
       # does not exist until the draft is published, and GORELEASER_CURRENT_TAG
-      # is what supplies the version in the meantime.
+      # supplies the version in the meantime.
       - name: build
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94  # v7.2.3
         with:
           version: v2.16.0
-          args: release --clean --skip=publish,announce,validate
+          args: release --clean --skip=announce,validate
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Empty when the secret is not set, which makes the cask's

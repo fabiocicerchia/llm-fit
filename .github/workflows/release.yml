@@ -82,6 +82,9 @@ jobs:
           args: release --clean --skip=publish,announce,validate
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Empty when the secret is not set, which makes the cask's
+          # skip_upload true rather than failing the release.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ needs.release-please.outputs.tag }}
 
       # Keyless Sigstore signing — no long-lived key to store or rotate. Verify

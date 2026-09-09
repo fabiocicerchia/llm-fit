@@ -26,6 +26,21 @@ Mistral Nemo 12B                   ExLlamaV2   EXL2-4.0   7.2 GiB     40/s     2
 
 ## Install
 
+macOS, via Homebrew:
+
+```sh
+brew install fabiocicerchia/tap/llm-fit
+```
+
+Linux — a `.deb`, `.rpm`, `.apk` or Arch package from the
+[latest release](https://github.com/fabiocicerchia/llm-fit/releases/latest):
+
+```sh
+sudo dpkg -i llm-fit_*_linux_amd64.deb     # or rpm -i / apk add --allow-untrusted
+```
+
+Or with Go:
+
 ```sh
 go install github.com/fabiocicerchia/llm-fit/cmd/llm-fit@latest
 ```

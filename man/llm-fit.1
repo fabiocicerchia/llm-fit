@@ -1,0 +1,132 @@
+.TH LLM-FIT 1 "2026-09" "llm-fit" "User Commands"
+.SH NAME
+llm-fit \- which LLMs this machine can run, and how fast
+.SH SYNOPSIS
+.B llm-fit
+.I command
+.RI [ flags ]
+.RI [ argument ]
+.SH DESCRIPTION
+.B llm-fit
+inspects the local hardware and reports which large language models fit in it,
+at which quantization and on which runtime, with an estimated speed for each.
+.PP
+Speed figures are estimates derived from memory bandwidth and compute, not
+measurements. They are usually within about 20% on hardware in the built-in
+table; treat them as "this is the right ballpark" rather than a benchmark.
+.SH COMMANDS
+.TP
+.B detect
+What hardware is here, and what it implies.
+.TP
+.B suggest
+Models that run well, best first.
+.TP
+.BI check " model"
+Every quantization and runtime for one model.
+.TP
+.BI check " file.gguf"
+Read the shape and quantization from a local GGUF file.
+.TP
+.B engines
+Runtime support matrix for this machine.
+.TP
+.B models
+The built-in catalogue.
+.TP
+.BR validate " [\fIFILE\fR]"
+Compare the tool's own estimates against measured runs (default
+.IR bench/observations.tsv ).
+.SH OPTIONS
+.TP
+.BI \-ctx " N"
+Context length to plan for (default 8192).
+.TP
+.BI \-kv " TYPE"
+KV cache precision:
+.BR f16 ", " q8_0 ", " q4_0
+(default f16).
+.TP
+.BI \-batch " N"
+Concurrent sequences (default 1).
+.TP
+.BI \-engine " NAME"
+Restrict to one runtime.
+.TP
+.B \-serving
+Optimise for concurrent throughput rather than chat latency.
+.TP
+.BI \-min " LEVEL"
+.BR unusable | sluggish | usable | good | excellent
+(default usable).
+.TP
+.BI \-min\-quality " N"
+Quantization quality floor, 0\-100 (default 55: no sub-3-bit).
+.TP
+.BI \-top " N"
+How many to list (default 12).
+.TP
+.B \-hf
+Read the architecture from Hugging Face instead of the built-in catalogue, e.g.
+.BR "llm-fit check \-hf Qwen/Qwen3-14B" .
+.TP
+.B \-json
+Machine-readable output.
+.TP
+.BI \-gpu " NAME"
+Plan for a different card ("RTX 4090", "A100 80GB", "M4 Max"), taking its VRAM,
+bandwidth and compute from the spec table.
+.TP
+.BI \-vram " GiB"
+Override VRAM only, keeping the detected bandwidth.
+.TP
+.BI \-ram " GiB"
+Override detected system RAM.
+.TP
+.BI \-ram\-bandwidth " GBs"
+Override system RAM bandwidth.
+.TP
+.BI \-parallel " tensor|layer"
+How to spread across several GPUs. The default is what the chosen runtime
+actually does: llama.cpp splits layers (extra cards buy capacity), while
+vLLM, SGLang, ExLlamaV2 and TensorRT-LLM shard tensors (extra cards buy
+speed). Ignored with one GPU.
+.TP
+.BI \-interconnect " GBs"
+GPU link bandwidth for tensor parallelism (default 32, one direction of
+PCIe 4.0 x16; NVLink is ~300+).
+.TP
+.BI \-draft " MODEL"
+Pair a speculative draft model with the target.
+.TP
+.BI \-lookahead " N"
+Tokens the draft proposes per verification step (default 4).
+.TP
+.BI \-acceptance " R"
+Assumed acceptance rate, 0\-1 (default 0.7). It is reported in the output,
+because the speedup depends on it more than on anything else.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 64
+Usage error: an unknown verb or a bad flag.
+.SH EXAMPLES
+.PP
+What this machine is, and what fits:
+.PP
+.RS
+.B llm-fit detect
+.br
+.B llm-fit suggest \-ctx 32768
+.RE
+.PP
+One model, every quantization:
+.PP
+.RS
+.B llm-fit check llama-3.1-8b
+.RE
+.SH SEE ALSO
+Project documentation:
+https://github.com/fabiocicerchia/llm-fit

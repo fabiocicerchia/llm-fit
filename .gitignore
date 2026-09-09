@@ -7,3 +7,6 @@ reports/
 
 # Docs site build
 site/
+
+# goreleaser output
+dist/

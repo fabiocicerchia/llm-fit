@@ -91,6 +91,22 @@ measures it: a few hundred milliseconds of multi-threaded copy over buffers far
 larger than L3. On the machine this was written on that returns 43 GB/s against
 a 51.2 GB/s theoretical peak, where the assumption would have been 80.
 
+## Verify the download
+
+Every release is signed with [cosign][cosign], keyless: the identity is the
+workflow that published it, not a key anybody holds.
+
+```sh
+cosign verify-blob \
+  --bundle checksums.txt.bundle \
+  --certificate-identity-regexp 'https://github.com/fabiocicerchia/llm-fit' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+sha256sum --ignore-missing -c checksums.txt
+```
+
+[cosign]: https://docs.sigstore.dev/
+
 ## Documentation
 
 Full docs live in [`docs/`](docs/). Runnable examples live in [`examples/`](examples/).

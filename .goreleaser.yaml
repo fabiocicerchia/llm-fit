@@ -107,6 +107,10 @@ changelog:
 homebrew_casks:
   - name: llm-fit
     binaries: [llm-fit]
+    # With the release pipe disabled goreleaser cannot derive this, and
+    # refuses rather than guessing.
+    url:
+      template: "https://github.com/fabiocicerchia/llm-fit/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     manpages: [man/llm-fit.1]
     homepage: https://github.com/fabiocicerchia/llm-fit
     description: Which LLMs this machine can run, and how fast
@@ -127,6 +131,10 @@ homebrew_casks:
         xattr -d com.apple.quarantine "$(brew --prefix)/bin/llm-fit"
 
 release:
+  # release-please already created the release for this tag; this run only
+  # builds and publishes the cask. Leaving the pipe on would have goreleaser
+  # try to create it a second time.
+  disable: true
   github:
     owner: fabiocicerchia
     name: llm-fit
@@ -134,14 +142,3 @@ release:
   # flips it to published as its last step.
   draft: true
   prerelease: auto
-  footer: |
-    ## Verify the download
-
-    ```sh
-    cosign verify-blob \
-      --bundle checksums.txt.bundle \
-      --certificate-identity-regexp 'https://github.com/fabiocicerchia/llm-fit' \
-      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-      checksums.txt
-    sha256sum --ignore-missing -c checksums.txt
-    ```

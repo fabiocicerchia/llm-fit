@@ -1,8 +1,8 @@
 {
   "Exclude": [
     "^LICENSE$",
-    "^cmd/llm\\-fit/main\\.go$",
-    "^internal/hfapi/fetch_test\\.go$"
+    "^apply\\-settings\\.sh$",
+    "^check\\-drift\\.sh$"
   ],
   "Disable": {
     "IndentSize": true

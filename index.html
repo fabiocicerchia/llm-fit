@@ -42,7 +42,11 @@ footer{margin-top:2.2rem;color:#5c6684;font-size:.82rem}
 <div class="card">
   <h1>📏 llm-fit</h1>
   <p class="tagline">Which LLMs this machine can actually run, and how fast.</p>
-  <p class="desc">Reads the hardware, does the memory and bandwidth arithmetic, and recommends a model, a quantization and a runtime — with an estimate of the tokens per second you will get. Seven runtimes with their real constraints, GQA/MLA/MoE handled as distinct cases, measured host memory bandwidth. No dependencies outside the standard library.</p>
+  <p class="desc">
+    Reads the hardware, does the memory and bandwidth arithmetic, and recommends a model, a quantization and a runtime —
+    with an estimate of the tokens per second you will get. Seven runtimes with their real constraints, GQA/MLA/MoE
+    handled as distinct cases, measured host memory bandwidth. No dependencies outside the standard library.
+  </p>
   <div class="install-label">Install</div>
   <pre><code>go install github.com/fabiocicerchia/llm-fit/cmd/llm-fit@latest</code></pre>
   <p class="alt">or, from a checkout: <code>make build   # ./bin/llm-fit</code></p>

@@ -24,6 +24,27 @@ Mistral Small 24B                  llama.cpp   IQ3_M     11.3 GiB     13/s     3
 Mistral Nemo 12B                   ExLlamaV2   EXL2-4.0   7.2 GiB     40/s     24k  excellent
 ```
 
+## Features
+
+- Works out **which models this machine can actually run, and how fast** —
+  reads the hardware, does the memory and bandwidth arithmetic, and recommends
+  a model, a quantization and a runtime together.
+- Estimates decode speed and maximum context per plan, so "it fits" and "it is
+  usable" stay separate answers.
+- `detect` explains what is here and what it implies; `engines` explains what
+  this machine can run **and why not**, rather than silently omitting.
+- `check` accepts a catalogue name, any Hugging Face repo (`-hf`), or a `.gguf`
+  file on disk, reading its real shape and quant.
+- Tunable against your actual workload: `-ctx` and `-kv` for context and KV
+  cache, `-batch` for concurrent sequences, `-serving` to optimise for
+  concurrency.
+- Quality floors built in — `-min` and `-min-quality` default to hiding plans
+  below *usable* and below 3-bit, so the list is what is worth running.
+- Plans for **hardware you do not own yet** with `-gpu`, which takes VRAM,
+  bandwidth and compute together from the spec table — overriding VRAM alone
+  would model your card with someone else's memory, which is nobody's
+  hardware.
+
 ## Install
 
 macOS, via Homebrew:

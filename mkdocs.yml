@@ -4,6 +4,7 @@
 # for the look; the accent palette lives there and is the only thing you swap.
 site_name: llm-fit
 site_description: >-
+  [retired] Which LLMs this machine can run, and how fast — unmaintained; see AlexsJones/llmfit
 site_url: https://fabiocicerchia.github.io/llm-fit/docs/
 repo_url: https://github.com/fabiocicerchia/llm-fit
 repo_name: fabiocicerchia/llm-fit

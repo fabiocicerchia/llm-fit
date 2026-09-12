@@ -46,7 +46,7 @@ nfpms:
     vendor: Fabio Cicerchia
     homepage: https://github.com/fabiocicerchia/llm-fit
     maintainer: Fabio Cicerchia <info@fabiocicerchia.it>
-    description: Which LLMs this machine can run, and how fast
+    description: "[retired] Which LLMs this machine can run, and how fast — unmaintained; see AlexsJones/llmfit"
     license: Apache-2.0
     formats: [deb, rpm, apk, archlinux]
     bindir: /usr/bin
@@ -113,7 +113,7 @@ homebrew_casks:
       template: "https://github.com/fabiocicerchia/llm-fit/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     manpages: [man/llm-fit.1]
     homepage: https://github.com/fabiocicerchia/llm-fit
-    description: Which LLMs this machine can run, and how fast
+    description: "[retired] Which LLMs this machine can run, and how fast — unmaintained; see AlexsJones/llmfit"
     repository:
       owner: fabiocicerchia
       name: homebrew-tap

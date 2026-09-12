@@ -1,5 +1,11 @@
 # llm-fit
 
+> [!WARNING]
+> **This project is retired** and no longer maintained. If you want something
+> that answers the same question,
+> [llmfit](https://github.com/AlexsJones/llmfit) is a separate project, actively
+> developed, and worth a look.
+
 [![CI](https://github.com/fabiocicerchia/llm-fit/actions/workflows/ci.yml/badge.svg)](https://github.com/fabiocicerchia/llm-fit/actions/workflows/ci.yml)
 [![Code Quality](https://github.com/fabiocicerchia/llm-fit/actions/workflows/code-quality.yml/badge.svg)](https://github.com/fabiocicerchia/llm-fit/actions/workflows/code-quality.yml)
 [![Security](https://github.com/fabiocicerchia/llm-fit/actions/workflows/security.yml/badge.svg)](https://github.com/fabiocicerchia/llm-fit/actions/workflows/security.yml)
